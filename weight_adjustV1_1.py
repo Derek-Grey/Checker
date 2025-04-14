@@ -7,52 +7,66 @@ import time
 import plotly.graph_objects as go
 from plotly.offline import plot
 import sys
+from pathlib import Path  # 添加这行以导入Path类
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+OUTPUT_DIR = Path(__file__).parent / 'output'  
 from urllib.parse import quote_plus
-from db_client import get_client_U
-
-client_u = get_client_U()  # 确保调用函数以获取MongoClient实例
+from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype, D1_6_numpy_dtype, D1_3_numpy_dtype
 
 # %%
-class LimitPriceChecker:
-    """检查股票涨跌停状态的类"""
+def read_npq_file(file_path, dtype, columns):
+    """读取NPQ文件并返回DataFrame"""
+    npq_data = np.fromfile(file_path, dtype=dtype)
+    quote = npq_data['quote']
+    df = pd.DataFrame(quote)
+    df = df.astype(str)
+    df = df[columns]
+    return df
+
+class DataSource:
+    def __init__(self, data_directory):
+        self.data_directory = data_directory  # 修正为直接赋值路径字符串
 
     def get_limit_status(self, date, codes):
         """获取指定日期的股票涨跌停状态"""
-        if isinstance(date, str):
-            date = pd.to_datetime(date)
-        date_str = date.strftime('%Y-%m-%d')
-        codes_list = codes.tolist() if isinstance(codes, np.ndarray) else codes
-        t_limit = client_u.basic_jq.jq_daily_price_none
-        use_cols = {"_id": 0, "date": 1, "code": 1, "close": 1, "high_limit": 1, "low_limit": 1}
-        df_limit = pd.DataFrame(t_limit.find({"date": date_str, "code": {"$in": codes_list}}, use_cols, batch_size=3000000))
-        limit_status = {code: 0 for code in codes}  # 默认为非涨跌停状态
-        if not df_limit.empty:
-            closes = df_limit['close'].values
-            high_limits = df_limit['high_limit'].values
-            low_limits = df_limit['low_limit'].values
-            limit_array = np.zeros(len(df_limit))
-            limit_array = np.where(closes == high_limits, 1, limit_array)
-            limit_array = np.where(closes == low_limits, -1, limit_array)
-            df_limit['limit'] = limit_array.astype('int')
-            limit_dict = dict(zip(df_limit['code'], df_limit['limit']))
-            limit_status.update(limit_dict)
-        return limit_status
+        start_time = time.time()
+        try:
+            limit_status_data = []
+            npq_file_path = Path(self.data_directory) / date.strftime('%Y-%m-%d') / "1" / "3.npq"
+            if npq_file_path.exists():
+                # 使用新的read_npq_file函数
+                df = read_npq_file(str(npq_file_path), D1_3_numpy_dtype, ['date', 'code', 'close', 'high_limit', 'low_limit'])
+                daily_limits = df[df['code'].isin(codes)]
+                for _, record in daily_limits.iterrows():
+                    limit_status_data.append({
+                        'date': record['date'],
+                        'code': record['code'],
+                        'limit': 1 if record['close'] == record['high_limit'] else -1 if record['close'] == record['low_limit'] else 0
+                    })
+            limit_status = pd.DataFrame(limit_status_data)
+            return limit_status
+        except Exception as e:
+            raise Exception(f"从NPQ文件获取涨跌停状态数据时出错: {str(e)}")
 
     def get_trade_status(self, date, codes):
         """获取指定日期的股票交易状态"""
-        if isinstance(date, str):
-            date = pd.to_datetime(date)
-        date_str = date.strftime('%Y-%m-%d')
-        codes_list = codes.tolist() if isinstance(codes, np.ndarray) else codes
-        t_info = client_u.basic_wind.w_basic_info
-        use_cols = {"_id": 0, "date": 1, "code": 1, "trade_status": 1}
-        df_info = pd.DataFrame(t_info.find({"date": date_str, "code": {"$in": codes_list}}, use_cols, batch_size=3000000))
-        trade_status = {code: 1 for code in codes}  # 默认可交易
-        if not df_info.empty:
-            for _, row in df_info.iterrows():
-                trade_status[row['code']] = row['trade_status']
-        return trade_status
+        start_time = time.time()
+        try:
+            trade_status_data = []
+            npq_file_path = Path(self.data_directory) / date.strftime('%Y-%m-%d') / "1" / "6.npq"
+            if npq_file_path.exists():
+                df = read_npq_file(str(npq_file_path), D1_6_numpy_dtype, ['date', 'code', 'trade_status'])
+                daily_trade_status = df[df['code'].isin(codes)]
+                for _, record in daily_trade_status.iterrows():
+                    trade_status_data.append({
+                        'date': record['date'],
+                        'code': record['code'],
+                        'trade_status': record['trade_status']
+                    })
+            trade_status = pd.DataFrame(trade_status_data)
+            return trade_status
+        except Exception as e:
+            raise Exception(f"从NPQ文件获取交易状态数据时出错: {str(e)}")
 
     def can_adjust_weight(self, code, weight_change, limit_status, trade_status):
         """判断是否可以调整权重"""
@@ -64,14 +78,14 @@ class LimitPriceChecker:
         return True
 # %%
 class PortfolioWeightAdjuster:
-    def __init__(self, weights_array, dates, codes, change_limit=0.05):
+    def __init__(self, weights_array, dates, codes, change_limit, data_directory):
         """初始化调整器"""
         self._start_time = time.time()
         self.weights = weights_array
         self.dates = pd.to_datetime(dates)
         self.codes = np.array(codes)
         self.change_limit = change_limit
-        self.limit_checker = LimitPriceChecker()
+        self.data_source = DataSource(data_directory) 
         print(f"初始化耗时: {time.time() - self._start_time:.2f}秒")
 
     def validate_weights_sum(self) -> bool:
@@ -105,8 +119,8 @@ class PortfolioWeightAdjuster:
             _loop_start = time.time()  # 记录每一天开始处理的时间
     
             # 获取当天的涨跌停状态和交易状态
-            limit_status = self.limit_checker.get_limit_status(self.dates[day], self.codes)
-            trade_status = self.limit_checker.get_trade_status(self.dates[day], self.codes)
+            limit_status = self.data_source.get_limit_status(self.dates[day], self.codes)
+            trade_status = self.data_source.get_trade_status(self.dates[day], self.codes)
     
             # 计算目标权重和权重变化
             target_weights = self.weights[day]
@@ -116,7 +130,7 @@ class PortfolioWeightAdjuster:
             can_adjust_mask = np.zeros(n_codes, dtype=bool)
             for i, code in enumerate(self.codes):
                 # 判断每个股票是否可以调整权重
-                can_adjust_mask[i] = self.limit_checker.can_adjust_weight(
+                can_adjust_mask[i] = self.data_source.can_adjust_weight(
                     code, weight_changes[i], limit_status, trade_status)
     
             # 限制权重变化在指定范围内
@@ -191,10 +205,10 @@ class PortfolioWeightAdjuster:
                 weights_array[date_idx, code_idx] = row['weight']
         return weights_array, dates, all_codes
 # %%
-def w_adjust(source_type, change_limit, data_source):
+def w_adjust(source_type, change_limit, data_source, data_directory):
     # 加载数据
     weights_array, dates, codes = PortfolioWeightAdjuster.load_data(data_source, source_type)
-    adjuster = PortfolioWeightAdjuster(weights_array, dates, codes, change_limit)
+    adjuster = PortfolioWeightAdjuster(weights_array, dates, codes, change_limit, data_directory)
     
     # 验证权重和并调整权重
     if adjuster.validate_weights_sum():
@@ -215,11 +229,12 @@ def w_adjust(source_type, change_limit, data_source):
     return long_format_df
 
 if __name__ == "__main__":
-    result1 = w_adjust(
+    weight_list = w_adjust(
         source_type='csv',
         change_limit=0.05,
-        data_source='csv/test_daily_weight.csv'  # 使用正斜杠
+        data_source='csv/test_daily_weight.csv',  
+        data_directory='D:\\Data'  
     )
-    print(result1)
+    print(weight_list)
 
     
