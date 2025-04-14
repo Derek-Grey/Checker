@@ -23,34 +23,6 @@ def read_npq_file(file_path):
     df = df.astype(str)
     df = df[['date', 'code', 'pct_chg']]
     return df
-
-def read_all_npq_files(data_root, start_date=None, end_date=None):
-    """遍历时间段目录读取NPQ文件"""
-    load_start_time = time.time()  # 数据加载开始时间记录
-    data_path = Path(data_root)
-    all_dfs = []
-    
-    # 遍历所有日期子目录
-    for date_dir in data_path.glob('*'):
-        if date_dir.is_dir():
-            npq_file = date_dir / "1" / "11.npq"
-            try:
-                df = read_npq_file(str(npq_file))
-                df['date'] = date_dir.name  # 保留日期作为索引
-               
-                if start_date and end_date:
-                    df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-                
-                all_dfs.append(df)
-            except Exception as e:
-                logger.warning(f"跳过{date_dir}，加载失败: {str(e)}")
-                continue
-                
-    load_end_time = time.time()  # 数据加载结束时间记录
-    logger.info(f"数据加载完成，耗时: {load_end_time - load_start_time:.4f}s")  # 输出数据加载耗时
-
-    return pd.concat(all_dfs).sort_values('date')
-
 # 定义数据检查器
 class DataChecker:
     def __init__(self, data_directory):

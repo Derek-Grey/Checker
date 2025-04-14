@@ -18,7 +18,10 @@ venv.bak/
 dist/
 build/
 *.egg
-
+*.csv
+*.xlsx
+*.xls
+*.xlsm
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -77,3 +80,4 @@ celerybeat-schedule
 
 # Output directory
 output/
+csv/
