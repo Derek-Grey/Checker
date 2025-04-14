@@ -159,10 +159,16 @@ class PortfolioWeightAdjuster:
             print(f"绘图耗时: {time.time() - _start:.2f}秒")
 
     @staticmethod
-    def load_data(data_source, source_type='csv'):
+    def load_data(data_source, source_type):
         """通用数据加载接口"""
         if source_type == 'csv':
             return PortfolioWeightAdjuster._from_csv(data_source)
+        elif source_type == 'df':
+            weights_df = data_source
+            dates = weights_df.index.to_list()
+            codes = weights_df.columns.to_list()
+            weights_array = weights_df.values
+            return weights_array, dates, codes
         else:
             raise ValueError(f"不支持的数据源类型: {source_type}")
 
