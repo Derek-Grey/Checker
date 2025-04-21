@@ -384,30 +384,6 @@ class PortfolioMetrics:
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
         return portfolio_returns, turnover
 
-    def _calculate_turnover(self, weights_arr, returns_arr):
-        """计算换手率"""
-        n_periods = len(weights_arr)
-        turnover = np.zeros(n_periods)
-        
-        # 第一期换手率就是权重之和
-        turnover[0] = np.sum(np.abs(weights_arr[0]))
-        
-        # 计算后续期间的换手率
-        for i in range(1, n_periods):
-            # 获取当前权重和前一期权重
-            curr_weights = weights_arr[i]
-            prev_weights = weights_arr[i-1]
-            prev_returns = returns_arr[i-1]
-            
-            # 计算理论权重
-            theoretical_weights = prev_weights * (1 + prev_returns)
-            theoretical_weights = theoretical_weights / np.sum(theoretical_weights)
-            
-            # 计算换手率
-            turnover[i] = np.sum(np.abs(curr_weights - theoretical_weights)) / 2
-        
-        return turnover
-
     def _save_results_array(self, dates, portfolio_returns, turnover):
         """将结果保存到CSV文件"""
         output_prefix = 'minute' if self.is_minute else 'daily'
