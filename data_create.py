@@ -71,8 +71,8 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
     for t in valid_times:
         time_str = t.strftime('%H:%M:%S')
         if is_weight:
-            # Equal weights for all stocks
-            values = [1.0 / len(stocks)] * len(stocks)
+            # 生成随机权重，确保和为1
+            values = np.random.dirichlet(np.ones(len(stocks))).flatten()
         else:
             values = np.random.normal(0.0001, 0.001, len(stocks))
             
