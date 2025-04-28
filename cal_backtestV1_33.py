@@ -353,9 +353,9 @@ class PortfolioMetrics:
             returns_arr[i, j] = row['return']
         
         return dates, codes, weights_arr, returns_arr
-
-    def calculate_portfolio_metrics(self):
-        """计算投资组合的收益率和换手率"""
+   
+    def calculate_portfolio_metrics(self, turn_loss: float = 0.003):
+        """计算投资组合的收益率、换手率及带成本的净值"""
         start_time = time.time()
         is_minute = self.is_minute
     
@@ -366,7 +366,7 @@ class PortfolioMetrics:
         print(returns_wide.head())
         # 计算组合收益率
         portfolio_returns = (weights_wide * returns_wide ).sum(axis=1)
-    
+        
         # 计算换手率
         turnover = pd.Series(index=weights_wide.index)
         turnover.iloc[0] = weights_wide.iloc[0].abs().sum()
@@ -377,9 +377,25 @@ class PortfolioMetrics:
             theoretical_weights = prev_weights * (1 + returns_t)
             theoretical_weights /= theoretical_weights.sum()
             turnover.iloc[i] = np.abs(curr_weights - theoretical_weights).sum() / 2
-    
-        # 保存结果
-        results = pd.DataFrame({'portfolio_return': portfolio_returns, 'turnover': turnover})
+
+        # 新增成本计算逻辑
+        df = pd.DataFrame({
+            'portfolio_return': portfolio_returns,
+            'turnover': turnover
+        })
+        
+        # 应用成本调整
+        df['loss'] = 0.0013
+        df.loc[df.index > '2023-08-31', 'loss'] = 0.0008
+        df['loss'] += turn_loss
+        df['chg_'] = df['portfolio_return'] - df['turnover'] * df['loss']
+        df['net_value'] = (df['chg_'] + 1).cumprod()
+        # 保存结果（增加累计净值列）
+        results = pd.DataFrame({
+            'portfolio_return': portfolio_returns,
+            'turnover': turnover,
+            'net_value': df['net_value'] 
+        })
         output_prefix = 'minute' if is_minute else 'daily'
         
         # 添加时间戳到文件名
@@ -391,13 +407,13 @@ class PortfolioMetrics:
             results['date'] = results.index.date
             results['time'] = results.index.time
             results = results.reset_index(drop=True)
-            # 调整列顺序，将 date 和 time 放在前两列
-            results = results[['date', 'time', 'portfolio_return', 'turnover']]
+            # 调整列顺序，增加净值列
+            results = results[['date', 'time', 'portfolio_return', 'turnover', 'net_value']]
         else:
             # 对于日频数据，确保包含 date 列
             results['date'] = pd.to_datetime(results.index).date
             results = results.reset_index(drop=True)
-            results = results[['date', 'portfolio_return', 'turnover']]
+            results = results[['date', 'portfolio_return', 'turnover', 'net_value']]
         
         results.to_csv(filename)
         
@@ -411,8 +427,8 @@ class StrategyPlotter:
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def plot_net_value(self, df: pd.DataFrame, strategy_name: str, turn_loss: float = 0.003):
-        df = df.copy()  # 创建副本避免修改原始数据
+    def plot_net_value(self, df: pd.DataFrame, strategy_name: str):
+        df = df.copy()
         df.reset_index(inplace=True)
 
         # 根据数据频率设置索引
@@ -434,9 +450,6 @@ class StrategyPlotter:
             logger.error("DataFrame 不包含 'turnover' 列。")
             return
 
-        # 计算成本和净值
-        self._calculate_costs_and_returns(df, turn_loss)
-        
         # 计算回撤
         self._calculate_drawdown(df)
         
@@ -445,20 +458,13 @@ class StrategyPlotter:
         
         # 绘制图表
         self._create_plot(df, strategy_name, start_date, stats)
-    
-    def _calculate_costs_and_returns(self, df: pd.DataFrame, turn_loss: float):
-        """计算成本和收益"""
-        # 设置固定成本，并针对特定日期进行调整
-        df['loss'] = 0.0013  # 初始固定成本
-        df.loc[df.index > '2023-08-31', 'loss'] = 0.0008  # 特定日期后的调整成本
-        df['loss'] += float(turn_loss)  # 加上换手损失
 
-        # 计算调整后的变动和累计净值
-        df['chg_'] = df['portfolio_return'] - df['turnover'] * df['loss']
-        df['net_value'] = (df['chg_'] + 1).cumprod()
-    
     def _calculate_drawdown(self, df: pd.DataFrame):
-        """计算最大回撤"""
+        """计算最大回撤（直接使用已有净值列）"""
+        # 确保净值列存在
+        if 'net_value' not in df.columns:
+            raise ValueError("DataFrame必须包含net_value列")
+            
         # 计算最大净值和回撤
         dates = df.index.unique().tolist()
         for date in dates:
@@ -466,7 +472,10 @@ class StrategyPlotter:
         df['back_net'] = df['net_value'] / df['max_net'] - 1
     
     def _calculate_statistics(self, df: pd.DataFrame):
-        """计算统计指标"""
+        """计算统计指标（基于已有净值）"""
+        if 'net_value' not in df.columns:
+            raise ValueError("需要net_value列进行统计计算")
+            
         s_ = df.iloc[-1]
         return {
             'annualized_return': format(s_.net_value ** (252 / df.shape[0]) - 1, '.2%'),
@@ -546,7 +555,7 @@ def backtest(data_directory, frequency, stock_path, return_file, use_equal_weigh
             try:
                 results_df = pd.read_csv(filename)
                 plotter = StrategyPlotter(output_dir='output')
-                plotter.plot_net_value(results_df, f"Portfolio_{frequency}", turn_loss=0.003)
+                plotter.plot_net_value(results_df, f"Portfolio_{frequency}")
                 print("已生成策略净值图表")
             except Exception as e:
                 print(f"绘制图表时出错: {str(e)}")

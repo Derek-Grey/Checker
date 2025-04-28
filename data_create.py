@@ -67,19 +67,26 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
         minute = t.minute
         if ((9 < hour < 11) or 
             (hour == 9 and minute >= 30) or 
-            (13 <= hour < 15) or 
-            (hour == 11 and minute < 30)):
+            (13 <= hour <= 15) or 
+            (hour == 11 and minute <= 30)):
             valid_times.append(t)
     
+    # 初始化prev_returns
+    prev_returns = None  # 新增初始化
     for t in valid_times:
         time_str = t.strftime('%H:%M:%S')
         if is_weight:
-            # 生成随机权重，确保和为1
             values = np.random.dirichlet(np.ones(len(stocks))).flatten()
         else:
-            # 生成收益率，确保其绝对值在0.005到0.5之间
-            values = np.random.uniform(0.005, 0.5, len(stocks))
-            values = [v * (1 if random.choice([True, False]) else -1) for v in values]
+            # 改进的收益率生成逻辑
+            base_returns = np.random.normal(0, 0.01, len(stocks))  # 使用正态分布允许正负波动
+            # 添加市场连续性因子（基于前一时间步的收益率）
+            if prev_returns is not None:
+                base_returns = 0.5 * base_returns + 0.5 * prev_returns
+            # 调整波动范围为-50%到50%
+            values = np.clip(base_returns, -0.01, 0.5)
+            # 保存当前收益率供下一分钟使用
+            prev_returns = values.copy()
             
         for stock, value in zip(stocks, values):
             data.append({
@@ -92,7 +99,7 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
     return pd.DataFrame(data)
 
 def generate_all_data(start_date='2010-01-02', end_date='2010-12-31', 
-                     minute_start_date='2010-01-02', minute_end_date='2010-01-05'):
+                     minute_start_date='2010-01-02', minute_end_date='2010-02-25'):
     """生成所有数据并保存到CSV文件"""
     # 创建目录
     output_dir = r'D:\Derek\Code\Checker\data'  # 使用原始字符串以避免转义序列错误
