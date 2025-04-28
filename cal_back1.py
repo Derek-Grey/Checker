@@ -122,7 +122,7 @@ class DataChecker:
            - 在交易时段内不应该有缺失的时间点
         """
         if 'time' not in df.columns:
-            # 日频数据检查
+            # 日频数据检查：检查每个股票在每个交易日是否只有一条数据
             date_code_counts = df.groupby(['date', 'code']).size()
             invalid_records = date_code_counts[date_code_counts > 1]
             if not invalid_records.empty:
@@ -289,7 +289,7 @@ class PortfolioMetrics:
                 df = read_npq_file(str(npq_file_path))
                 daily_returns = df[df['code'].isin(codes)]
                 for _, record in daily_returns.iterrows():
-                    returns_data.append({'date': record['date'], 'code': record['code'], 'return': float(record['pct_chg'])})
+                    returns_data.append({'date': record['date'], 'code': record['code'], 'return': float(record['pct_chg']) / 100})
             returns = pd.DataFrame(returns_data)
         
             print(f"获取收益率数据总耗时: {time.time() - start_time:.2f}秒\n")
@@ -306,16 +306,8 @@ class PortfolioMetrics:
 
     def _convert_to_arrays(self, weights_df, returns_df):
         """将DataFrame转换为numpy数组，并处理等权重"""
-        # 如果存在time列，先将date和time列合并
-        if 'time' in weights_df.columns:
-            weights_df['datetime'] = pd.to_datetime(weights_df['date'] + ' ' + weights_df['time'])
-            returns_df['datetime'] = pd.to_datetime(returns_df['date'] + ' ' + returns_df['time'])
-            date_col = 'datetime'
-        else:
-            date_col = 'date'
-        
         # 获取唯一的日期和股票代码
-        dates = weights_df[date_col].unique()
+        dates = weights_df['date'].unique()
         codes = weights_df['code'].unique()
         
         # 创建空的权重和收益率矩阵
@@ -328,27 +320,27 @@ class PortfolioMetrics:
         date_idx = {date: i for i, date in enumerate(dates)}
         code_idx = {code: i for i, code in enumerate(codes)}
         
-        # 判断是否使用等权重
-        if self.use_equal_weights:
-            print("使用等权重")
-            weights_per_date = 1.0 / weights_df.groupby(date_col)['code'].transform('count').values
-            for idx, row in weights_df.iterrows():
-                i = date_idx[row[date_col]]
-                j = code_idx[row['code']]
-                weights_arr[i, j] = weights_per_date[idx]
-        elif 'weight' in weights_df.columns:
-            # 填充权重矩阵
-            print("使用提供的权重")
+        # 填充权重矩阵
+        if 'weight' in weights_df.columns:
             for _, row in weights_df.iterrows():
-                i = date_idx[row[date_col]]
+                i = date_idx[row['date']]
                 j = code_idx[row['code']]
                 weights_arr[i, j] = row['weight']
         else:
-            raise ValueError("权重列缺失，且未设置使用等权重")
+            # 使用等权重
+            if self.use_equal_weights:
+                print("权重列缺失，使用等权重")
+                weights_per_date = 1.0 / weights_df.groupby('date')['code'].transform('count').values
+                for idx, row in weights_df.iterrows():
+                    i = date_idx[row['date']]
+                    j = code_idx[row['code']]
+                    weights_arr[i, j] = weights_per_date[idx]
+            else:
+                raise ValueError("权重列缺失，且未设置使用等权重")
         
         # 填充收益率矩阵
         for _, row in returns_df.iterrows():
-            i = date_idx[row[date_col]]
+            i = date_idx[row['date']]
             j = code_idx[row['code']]
             returns_arr[i, j] = row['return']
         
@@ -357,94 +349,102 @@ class PortfolioMetrics:
     def calculate_portfolio_metrics(self):
         """计算投资组合的收益率和换手率"""
         start_time = time.time()
+        
+        # 判断是否为分钟频数据
         is_minute = self.is_minute
-    
-        # 将 numpy 数组转换为 DataFrame
-        weights_wide = pd.DataFrame(self.weights_arr, index=self.dates, columns=self.codes)
-        returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
-        print(weights_wide.head()) 
-        print(returns_wide.head())
+        
+        # 设置索引
+        if is_minute:
+            self.weights['datetime'] = pd.to_datetime(self.weights['date'] + ' ' + self.weights['time'])
+            self.returns['datetime'] = pd.to_datetime(self.returns['date'] + ' ' + self.returns['time'])
+            index_cols = ['datetime', 'code']
+        else:
+            self.weights['date'] = pd.to_datetime(self.weights['date'])
+            self.returns['date'] = pd.to_datetime(self.returns['date'])
+            index_cols = ['date', 'code']
+        
+        # 将数据转换为宽格式
+        weights_wide = self.weights.pivot(
+            index=index_cols[0],
+            columns='code',
+            values='weight'
+        )
+        returns_wide = self.returns.pivot(
+            index=index_cols[0],
+            columns='code',
+            values='return'
+        )
+        
         # 计算组合收益率
-        portfolio_returns = (weights_wide * returns_wide ).sum(axis=1)
-    
+        portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
+        
         # 计算换手率
+        weights_shift = weights_wide.shift(1)
+        
+        # 处理第一个时间点
         turnover = pd.Series(index=weights_wide.index)
-        turnover.iloc[0] = weights_wide.iloc[0].abs().sum()
+        turnover.iloc[0] = weights_wide.iloc[0].abs().sum()  # 第一个时间点的换手率为权重绝对值之和
+        
+        # 计算其他时间点的换手率
         for i in range(1, len(weights_wide)):
+            # 获取当前和前一时间点的权重
             curr_weights = weights_wide.iloc[i]
             prev_weights = weights_wide.iloc[i-1]
+            
+            # 计算前一时间点权重在当前时间点的理论值
             returns_t = returns_wide.iloc[i-1]
             theoretical_weights = prev_weights * (1 + returns_t)
-            theoretical_weights /= theoretical_weights.sum()
+            theoretical_weights = theoretical_weights / theoretical_weights.sum()  # 归一化
+            
+            # 计算换手率
             turnover.iloc[i] = np.abs(curr_weights - theoretical_weights).sum() / 2
-    
+        
         # 保存结果
-        results = pd.DataFrame({'portfolio_return': portfolio_returns, 'turnover': turnover})
+        results = pd.DataFrame({
+            'portfolio_return': portfolio_returns,
+            'turnover': turnover
+        })
+        
         output_prefix = 'minute' if is_minute else 'daily'
-        
-        # 添加时间戳到文件名
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f'output/test_{output_prefix}_portfolio_metrics_{timestamp}.csv'
-        
-        # 如果是分钟频数据，拆分 datetime 列为 date 和 time 列
-        if is_minute:
-            results['date'] = results.index.date
-            results['time'] = results.index.time
-            results = results.reset_index(drop=True)
-            # 调整列顺序，将 date 和 time 放在前两列
-            results = results[['date', 'time', 'portfolio_return', 'turnover']]
-        else:
-            # 对于日频数据，确保包含 date 列
-            results['date'] = pd.to_datetime(results.index).date
-            results = results.reset_index(drop=True)
-            results = results[['date', 'portfolio_return', 'turnover']]
-        
-        results.to_csv(filename)
+        results.to_csv(f'output/test_{output_prefix}_portfolio_metrics.csv')
         
         print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
-        print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return portfolio_returns, turnover ,filename
         
-# 绘图类
+        print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
+        return portfolio_returns, turnover
+
+    def _save_results_array(self, dates, portfolio_returns, turnover):
+        """将结果保存到CSV文件"""
+        output_prefix = 'minute' if self.is_minute else 'daily'
+        results = np.column_stack((dates, portfolio_returns, turnover))
+        np.savetxt(
+            f'output/test_{output_prefix}_portfolio_metrics.csv',
+            results,
+            delimiter=',',
+            header='date,portfolio_return,turnover',
+            fmt=['%s', '%.6f', '%.6f'],
+            comments=''
+        )
+        
+        print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
+
 class StrategyPlotter:
+    """
+    策略结果可视化类
+    
+    Attributes:
+        output_dir: 输出图表目录
+    """
+    
     def __init__(self, output_dir='output'):
+        """
+        初始化绘图类
+        
+        Args:
+            output_dir: 输出目录路径
+        """
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
-
-    def plot_net_value(self, df: pd.DataFrame, strategy_name: str, turn_loss: float = 0.003):
-        df = df.copy()  # 创建副本避免修改原始数据
-        df.reset_index(inplace=True)
-
-        # 根据数据频率设置索引
-        if 'time' in df.columns:
-            df['datetime'] = pd.to_datetime(df['date'].astype(str) + ' ' + df['time'].astype(str))
-            df.set_index('datetime', inplace=True)
-        else:
-            df.set_index('date', inplace=True)
-
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
-        start_date = df.index[0]
-
-        # 确保必要的列存在
-        if 'portfolio_return' not in df.columns:
-            logger.error("DataFrame 不包含 'portfolio_return' 列。")
-            return
-        if 'turnover' not in df.columns:
-            logger.error("DataFrame 不包含 'turnover' 列。")
-            return
-
-        # 计算成本和净值
-        self._calculate_costs_and_returns(df, turn_loss)
-        
-        # 计算回撤
-        self._calculate_drawdown(df)
-        
-        # 计算统计指标
-        stats = self._calculate_statistics(df)
-        
-        # 绘制图表
-        self._create_plot(df, strategy_name, start_date, stats)
     
     def _calculate_costs_and_returns(self, df: pd.DataFrame, turn_loss: float):
         """计算成本和收益"""
@@ -454,7 +454,7 @@ class StrategyPlotter:
         df['loss'] += float(turn_loss)  # 加上换手损失
 
         # 计算调整后的变动和累计净值
-        df['chg_'] = df['portfolio_return'] - df['turnover'] * df['loss']
+        df['chg_'] = df['daily_return'] - df['turnover_rate'] * df['loss']
         df['net_value'] = (df['chg_'] + 1).cumprod()
     
     def _calculate_drawdown(self, df: pd.DataFrame):
@@ -473,96 +473,176 @@ class StrategyPlotter:
             'monthly_volatility': format(df.net_value.pct_change().std() * 21 ** 0.5, '.2%'),
             'end_date': s_.name
         }
+    def plot_net_value(self, df: pd.DataFrame, strategy_name: str, turn_loss: float = 0.003, index_code: str = 'ww_indexconstituent8841431'):
+        """
+        绘制策略的累计净值和回撤曲线，并可选地添加指数净值线
+        
+        Args:
+            df: 包含回测结果的DataFrame
+            strategy_name: 策略名称
+            turn_loss: 换手损失率
+            index_code: 指数代码
+        """
+        df = df.copy()  # 创建副本避免修改原始数据
+        df.reset_index(inplace=True)
+        df.set_index('date', inplace=True)
+        start_date = df.index[0]
+        
+        # 确保必要的列存在
+        if 'daily_return' not in df.columns:
+            logger.error("DataFrame 不包含 'daily_return' 列。")
+            return
+        if 'turnover_rate' not in df.columns:
+            logger.error("DataFrame 不包含 'turnover_rate' 列。")
+            return
+
+        # 计算成本和净值
+        self._calculate_costs_and_returns(df, turn_loss)
+        
+        # 计算回撤
+        self._calculate_drawdown(df)
+        
+        # 计算统计指标
+        stats = self._calculate_statistics(df)      
+        # 获取指数净值数据，考虑成本
+        index_net_value = self._fetch_index_net_value(index_code, df.index, cost=turn_loss)
+        
+        # 绘制图表
+        self._create_plot(df, strategy_name, start_date, stats, index_net_value)
     
-    def _create_plot(self, df, strategy_name, start_date, stats):
+    def _fetch_index_net_value(self, index_code: str, dates: pd.Index, cost: float = 0.0):
+        """从MongoDB获取指数净值数据，考虑成本"""
+        # 使用 get_client_U 函数获取 MongoDB 客户端
+        client = get_client_U(m='r')  # 假设使用只读权限
+        db = client['basic_wind']
+        collection = db['ww_index8841431Daily']  # 修改为新的集合名称
+        
+        index_net_value = [1] 
+        for date in dates[1:]:  
+            if isinstance(date, str):
+                date = pd.to_datetime(date)
+            record = collection.find_one({'date': date.strftime('%Y-%m-%d')})
+            if record:
+                pct_chg = record.get('pct_chg', 0) 
+                pct_chg = float(pct_chg)
+                index_net_value.append(index_net_value[-1] * (1 + pct_chg / 100))
+            else:
+                index_net_value.append(index_net_value[-1])
+        
+        return pd.Series(index_net_value, index=dates)
+    
+    def _create_plot(self, df: pd.DataFrame, strategy_name: str, start_date, stats: dict, index_net_value: pd.Series = None):
         """创建图表"""
         # 创建净值和回撤的plotly图形对象
-        g1 = go.Scatter(x=df.index.unique().tolist(), y=df['net_value'], name='净值')
-        g2 = go.Scatter(x=df.index.unique().tolist(), y=df['back_net'] * 100, name='回撤', xaxis='x', yaxis='y2', mode="none",
-                        fill="tozeroy")
-
-        # 修正后的图表配置
-        fig = go.Figure(
-            data=[g1, g2],
-            layout={
-                'height': 1122,
-                "title": f"{strategy_name}策略，<br>净值（左）& 回撤（右），<br>全期：{start_date} ~ {stats['end_date']}，<br>年化收益：{stats['annualized_return']}，月波动：{stats['monthly_volatility']}",
-                "font": {"size": 22},
-                "yaxis": {"title": "累计净值", "side": "left"},
-                "yaxis2": {
-                    "title": "最大回撤", 
-                    "side": "right", 
-                    "overlaying": "y", 
-                    "ticksuffix": "%",
-                    "showgrid": False
-                },
-                "xaxis": {
-                    "title": "交易日序列",
-                    "type": "category",
-                    "tickmode": "array",
-                    "tickvals": df.index[::len(df)//10],
-                    "ticktext": df.index.strftime('%Y-%m-%d')[::len(df)//10]
-                },
-                "legend": {"x": 0, "y": 1},
-                "hovermode": "x unified"
-            }
-        )  # 补充缺失的括号
+        g1 = go.Scatter(
+            x=df.index.unique().tolist(),
+            y=df['net_value'],
+            name='策略净值',
+            line=dict(color='blue', width=2)
+        )
+        g2 = go.Scatter(
+            x=df.index.unique().tolist(),
+            y=df['back_net'] * 100,
+            name='回撤',
+            xaxis='x',
+            yaxis='y2',
+            mode="none",
+            fill="tozeroy",
+            fillcolor='rgba(255, 0, 0, 0.3)'
+        )
         
+        # 添加指数净值线
+        if index_net_value is not None:
+            g3 = go.Scatter(
+                x=index_net_value.index,
+                y=index_net_value,
+                name='指数净值',
+                line=dict(dash='dash', color='green', width=2)
+            )
+        
+        # 配置并显示图表
+        fig = go.Figure(
+            data=[g1, g2] + ([g3] if index_net_value is not None else []),
+            layout={
+                'height': 800,
+                "title": {
+                    "text": f"{strategy_name}策略<br>净值（左）& 回撤（右）<br>全期：{start_date} ~ {stats['end_date']}<br>年化收益：{stats['annualized_return']}<br>月波动：{stats['monthly_volatility']}",
+                    "x": 0.5,
+                    "xanchor": "center",
+                    "yanchor": "top",
+                    "font": {"size": 24}
+                },
+                "xaxis": {"title": "日期", "showgrid": False},
+                "yaxis": {"title": "累计净值", "showgrid": True, "zeroline": False},
+                "yaxis2": {"title": "最大回撤", "side": "right", "overlaying": "y", "ticksuffix": "%", "showgrid": False},
+                "legend": {"orientation": "h", "x": 0.5, "xanchor": "center", "y": -0.2},
+                "plot_bgcolor": "white"
+            }
+        )
         fig.show()
-
+    
     def _save_plot(self, strategy_name: str):
         """保存图表到文件（如果需要）"""
         # TODO: 实现图表保存功能
         pass
 
-def backtest(data_directory, frequency, stock_path, return_file, use_equal_weights, plot_results):
+def backtest(data_directory, frequency, stock_path, return_file, use_equal_weights, plot_results=False):
     """主函数，支持交互式和命令行参数两种调用方式"""
-    try:
-        print("=== 投资组合指标计算器 ===")
-        
-        # 初始化检查器，传递 data_directory 参数
-        checker = DataChecker(data_directory)
-        weights = pd.read_csv(stock_path)
-        checker.check_trading_dates(weights)
-        if frequency == 'minute':
-            checker.check_time_frequency(weights)
-        
-        print("数据验证通过")
-        
-        # 初始化组合指标计算器
-        portfolio = PortfolioMetrics(
-            weight_file=stock_path,
-            return_file=return_file,
-            use_equal_weights=use_equal_weights,
-            data_directory=data_directory
-        )
-        
-        # 执行计算并保存结果
-        portfolio_returns, turnover,filename = portfolio.calculate_portfolio_metrics()
-        print(f"\n计算完成！结果已保存至 filename ”目录")
-        print (filename)
-        # 如果需要绘制结果
-        if plot_results:
-            try:
-                results_df = pd.read_csv(filename)
-                plotter = StrategyPlotter(output_dir='output')
-                plotter.plot_net_value(results_df, f"Portfolio_{frequency}", turn_loss=0.003)
-                print("已生成策略净值图表")
-            except Exception as e:
-                print(f"绘制图表时出错: {str(e)}")
+    from pathlib import Path
+    
+    print("=== 投资组合指标计算器 ===")
+    
+    abs_stock_path = str(Path(__file__).parent.parent / stock_path)
+    weights_df = pd.read_csv(abs_stock_path)
 
-        return portfolio_returns, turnover
-        
-    except Exception as e:
-        print(f"\n执行过程中出现错误: {str(e)}")
-        raise
-
+    # 初始化检查器，传递 data_directory 参数
+    checker = DataChecker(data_directory)
+    weights = pd.read_csv(abs_stock_path)
+    checker.check_trading_dates(weights)
+    if frequency == 'minute':
+        checker.check_time_frequency(weights)
+    
+    # 数据验证通过提示
+    print("数据验证通过")
+    
+    # 初始化组合指标计算器
+    portfolio = PortfolioMetrics(
+        weight_file=abs_stock_path,
+        return_file=return_file,  # 提供收益率表文件路径
+        use_equal_weights=use_equal_weights,
+        data_directory=data_directory
+    )
+    
+    # 执行计算并保存结果
+    returns, turnover = portfolio.calculate_portfolio_metrics()
+    print(f"\n计算完成！结果已保存至 output/ 目录")
+    
+    # 如果需要绘制结果
+    if plot_results:
+        try:
+            # 准备绘图数据
+            results_file = f'output/test_{"minute" if portfolio.is_minute else "daily"}_portfolio_metrics.csv'
+            results_df = pd.read_csv(results_file)
+            
+            # 重命名列以匹配StrategyPlotter期望的格式
+            results_df.rename(columns={
+                'portfolio_return': 'daily_return',
+                'turnover': 'turnover_rate'
+            }, inplace=True)
+            
+            # 初始化绘图器并绘制净值曲线
+            plotter = StrategyPlotter(output_dir='output')
+            plotter.plot_net_value(results_df, f"Portfolio_{frequency}", turn_loss=0.003)
+            print("已生成策略净值图表")
+        except Exception as e:
+            print(f"绘制图表时出错: {str(e)}")
+    return returns, turnover
 if __name__ == "__main__":
-    portfolio_returns, turnover= backtest(
+    returns, turnover=backtest(
         data_directory='D:\\Data',
-        frequency='daily',
-        stock_path=r'D:\Derek\Code\Checker\data\test_daily_weight.csv',
-        return_file=None,
-        use_equal_weights=False,
-        plot_results=True
+        frequency='daily',  # 修改为分钟频数据
+        stock_path=r'D:\\Derek\\Code\\Checker\\csv\\test_daily_weight.csv', 
+        return_file=None,  
+        use_equal_weights=True,
+        plot_results=True  # 设置为True可以绘制结果图表
     )

@@ -29,14 +29,17 @@ def get_random_stocks_and_returns(date: str, client) -> Tuple[List[str], List[fl
     num_stocks = random.randint(40, 50)
     selected_stocks = random.sample(daily_data, min(num_stocks, len(daily_data)))
     
-    # Ensure the lists have the same length
+    # 确保列表长度相同
     if len(selected_stocks) == 0:
         return [], []
     
     codes = [stock['code'] for stock in selected_stocks]
     returns = [float(stock['pct_chg']) for stock in selected_stocks]
     
-    # Check if lengths are equal
+    # 过滤收益率，确保其绝对值在0.005到0.5之间
+    returns = [ret if 0.005 <= abs(ret) <= 0.5 else random.uniform(0.005, 0.5) * (1 if ret >= 0 else -1) for ret in returns]
+    
+    # 确保长度相等
     assert len(codes) == len(returns), "Codes and returns lists must have the same length"
     
     return codes, returns
@@ -74,7 +77,9 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
             # 生成随机权重，确保和为1
             values = np.random.dirichlet(np.ones(len(stocks))).flatten()
         else:
-            values = np.random.normal(0.0001, 0.001, len(stocks))
+            # 生成收益率，确保其绝对值在0.005到0.5之间
+            values = np.random.uniform(0.005, 0.5, len(stocks))
+            values = [v * (1 if random.choice([True, False]) else -1) for v in values]
             
         for stock, value in zip(stocks, values):
             data.append({
@@ -86,8 +91,8 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
     
     return pd.DataFrame(data)
 
-def generate_all_data(start_date='2006-01-02', end_date='2010-12-31', 
-                     minute_start_date='2006-01-02', minute_end_date='2006-01-31'):
+def generate_all_data(start_date='2010-01-02', end_date='2010-12-31', 
+                     minute_start_date='2010-01-02', minute_end_date='2010-01-05'):
     """生成所有数据并保存到CSV文件"""
     # 创建目录
     output_dir = r'D:\Derek\Code\Checker\data'  # 使用原始字符串以避免转义序列错误
