@@ -14,8 +14,6 @@ import plotly.graph_objects as go
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 OUTPUT_DIR = Path(__file__).parent / 'output'  # 使用当前文件所在目录下的output文件夹
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype
-from db_client import get_client_U
-import pymongo
 from urllib.parse import quote_plus
 
 def read_npq_file(file_path):
@@ -26,31 +24,6 @@ def read_npq_file(file_path):
     df = df.astype(str)
     df = df[['date', 'code', 'pct_chg']]
     return df
-
-def get_client_U(m='r'):
-    """
-    获取带用户认证的MongoDB客户端连接
-    :param m: 权限类型('r'/'rw'/'Neo')
-    :return: MongoDB客户端实例
-    """
-    # 用户权限配置
-    auth_config = {
-        'r': ('Tom', 'tom'),      # 只读权限
-        'rw': ('Amy', 'amy'),     # 读写权限
-        'Neo': ('Neo', 'neox'),   # 管理员权限
-    }
-    
-    user, pwd = auth_config.get(m, ('Tom', 'tom'))  # 默认只读权限
-    if m not in auth_config:
-        logger.warning(f'传入的参数 {m} 有误，使用默认只读权限')
-        
-    return pymongo.MongoClient(
-        "mongodb://%s:%s@%s" % (
-            quote_plus(user),
-            quote_plus(pwd),
-            '192.168.1.99:29900/'
-        )
-    )
 
 # 定义数据检查器
 class DataChecker:
@@ -89,9 +62,9 @@ class DataChecker:
             
             # 定义交易时间段
             morning_start = pd.to_datetime('09:30:00').time()
-            morning_end = pd.to_datetime('11:29:00').time()
+            morning_end = pd.to_datetime('11:30:00').time()
             afternoon_start = pd.to_datetime('13:00:00').time()
-            afternoon_end = pd.to_datetime('14:59:00').time()
+            afternoon_end = pd.to_datetime('15:00:00').time()
             
             # 检查是否在交易时间内
             times_outside_trading = df[~(
@@ -104,7 +77,7 @@ class DataChecker:
                 raise ValueError(
                     f"发现非交易时间数据：\n"
                     f"{non_trading_times}\n"
-                    f"交易时间为 09:30:00-11:29:00 和 13:00:00-14:59:00"
+                    f"交易时间为 09:30:00-11:30:00 和 13:00:00-15:00:00"
                 )
             
             print("时间格式和交易时间范围检查通过")
@@ -196,13 +169,13 @@ class DataChecker:
                 # 生成上午的时间序列
                 morning_times = pd.date_range(
                     f"{date.strftime('%Y-%m-%d')} 09:30:00",
-                    f"{date.strftime('%Y-%m-%d')} 11:29:00",
+                    f"{date.strftime('%Y-%m-%d')} 11:30:00",
                     freq=f"{freq_minutes}min"
                 )
                 # 生成下午的时间序列
                 afternoon_times = pd.date_range(
                     f"{date.strftime('%Y-%m-%d')} 13:00:00",
-                    f"{date.strftime('%Y-%m-%d')} 14:59:00",
+                    f"{date.strftime('%Y-%m-%d')} 15:00:00",
                     freq=f"{freq_minutes}min"
                 )
                 expected_times.extend(morning_times)
@@ -233,7 +206,7 @@ class DataChecker:
             raise ValueError(f"数据包含非交易日: {invalid_dates}")
 
 class PortfolioMetrics:
-    def __init__(self, weight_file, return_file=None, use_equal_weights=True, data_directory='D:\\Data'):
+    def __init__(self, weight_file, return_file, use_equal_weights,data_directory):
         """初始化投资组合指标计算器"""
         self.weight_file = weight_file
         self.return_file = return_file
@@ -560,9 +533,9 @@ def backtest(data_directory, frequency, stock_path, return_file, use_equal_weigh
 if __name__ == "__main__":
     portfolio_returns, turnover= backtest(
         data_directory='D:\\Data',
-        frequency='minute',
-        stock_path=r'D:\Derek\Code\Checker\data\test_minute_weight.csv',
-        return_file=r'D:\Derek\Code\Checker\data\test_minute_return.csv',
-        use_equal_weights=False,
+        frequency='daily',
+        stock_path=r'D:\Derek\Code\Checker\data\test_daily_weight.csv',
+        return_file=None,
+        use_equal_weights=True,
         plot_results=True
     )
