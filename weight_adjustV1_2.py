@@ -1,3 +1,8 @@
+'''
+autor: Casper Dai 
+time: 2025.5.12
+version: 1.2
+'''
 # %%
 import os
 import pandas as pd
