@@ -98,8 +98,8 @@ def create_minute_data(date: str, stocks: List[str], is_weight=True) -> pd.DataF
     
     return pd.DataFrame(data)
 
-def generate_all_data(start_date='2010-01-02', end_date='2010-12-31', 
-                     minute_start_date='2010-01-02', minute_end_date='2010-02-25'):
+def generate_all_data(start_date='2010-01-02', end_date='2010-01-10', 
+                     minute_start_date='2010-01-02', minute_end_date='2010-01-10'):
     """生成所有数据并保存到CSV文件"""
     # 创建目录
     output_dir = r'D:\Derek\Code\Checker\data'  # 使用原始字符串以避免转义序列错误
