@@ -1,3 +1,8 @@
+'''
+autor: Casper Dai 
+time: 2025.5.12
+version: 1.2
+'''
 # %%
 import os
 import pandas as pd
@@ -7,15 +12,13 @@ import time
 import plotly.graph_objects as go
 from plotly.offline import plot
 import sys
-from pathlib import Path  # 添加这行以导入Path类
+from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-OUTPUT_DIR = Path(__file__).parent / 'output'  
+OUTPUT_DIR = Path(__file__).parent / 'output'
 from urllib.parse import quote_plus
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype, D1_6_numpy_dtype, D1_3_numpy_dtype
 
-# %%
 def read_npq_file(file_path, dtype, columns):
-    """读取NPQ文件并返回DataFrame"""
     npq_data = np.fromfile(file_path, dtype=dtype)
     quote = npq_data['quote']
     df = pd.DataFrame(quote)
@@ -25,16 +28,14 @@ def read_npq_file(file_path, dtype, columns):
 
 class DataSource:
     def __init__(self, data_directory):
-        self.data_directory = data_directory  # 修正为直接赋值路径字符串
+        self.data_directory = data_directory
 
     def get_limit_status(self, date, codes):
-        """获取指定日期的股票涨跌停状态"""
         start_time = time.time()
         try:
             limit_status_data = []
             npq_file_path = Path(self.data_directory) / date.strftime('%Y-%m-%d') / "1" / "3.npq"
             if npq_file_path.exists():
-                # 使用新的read_npq_file函数
                 df = read_npq_file(str(npq_file_path), D1_3_numpy_dtype, ['date', 'code', 'close', 'high_limit', 'low_limit'])
                 daily_limits = df[df['code'].isin(codes)]
                 for _, record in daily_limits.iterrows():
@@ -49,9 +50,8 @@ class DataSource:
             raise Exception(f"从NPQ文件获取涨跌停状态数据时出错: {str(e)}")
 
     def get_trade_status(self, date, codes):
-        """获取指定日期的股票交易状态"""
         start_time = time.time()
-        try:
+        try: 
             trade_status_data = []
             npq_file_path = Path(self.data_directory) / date.strftime('%Y-%m-%d') / "1" / "6.npq"
             if npq_file_path.exists():
@@ -69,27 +69,24 @@ class DataSource:
             raise Exception(f"从NPQ文件获取交易状态数据时出错: {str(e)}")
 
     def can_adjust_weight(self, code, weight_change, limit_status, trade_status):
-        """判断是否可以调整权重"""
-        if trade_status.get(code, 1) == 0:  # 停牌状态
+        if trade_status.get(code, 1) == 0:
             return False
         status = limit_status.get(code, 0)
         if status == 1 and weight_change > 0: return False
         if status == -1 and weight_change < 0: return False
         return True
-# %%
+
 class PortfolioWeightAdjuster:
     def __init__(self, weights_array, dates, codes, change_limit, data_directory):
-        """初始化调整器"""
         self._start_time = time.time()
         self.weights = weights_array
         self.dates = pd.to_datetime(dates)
         self.codes = np.array(codes)
         self.change_limit = change_limit
-        self.data_source = DataSource(data_directory) 
+        self.data_source = DataSource(data_directory)
         print(f"初始化耗时: {time.time() - self._start_time:.2f}秒")
 
     def validate_weights_sum(self) -> bool:
-        """验证权重和"""
         _start = time.time()
         try:
             daily_sums = np.sum(self.weights, axis=1)
@@ -109,72 +106,46 @@ class PortfolioWeightAdjuster:
             return False
 
     def adjust_weights_over_days(self):
-        """调整权重"""
-        _start = time.time()  # 记录开始时间
-        n_dates, n_codes = self.weights.shape  # 获取日期和股票代码的数量
-        adjusted_weights = np.zeros_like(self.weights)  # 初始化调整后的权重数组
-        current_weights = self.weights[0].copy()  # 使用第一天的权重作为初始权重
-    
-        for day in range(n_dates):
-            _loop_start = time.time()  # 记录每一天开始处理的时间
-    
-            # 获取当天的涨跌停状态和交易状态
-            limit_status = self.data_source.get_limit_status(self.dates[day], self.codes)
-            trade_status = self.data_source.get_trade_status(self.dates[day], self.codes)
-    
-            # 计算目标权重和权重变化
-            target_weights = self.weights[day]
-            weight_changes = target_weights - current_weights
-    
-            # 创建可调整的掩码数组
-            can_adjust_mask = np.zeros(n_codes, dtype=bool)
-            for i, code in enumerate(self.codes):
-                # 判断每个股票是否可以调整权重
-                can_adjust_mask[i] = self.data_source.can_adjust_weight(
-                    code, weight_changes[i], limit_status, trade_status)
-    
-            # 限制权重变化在指定范围内
-            weight_changes_limited = np.clip(weight_changes, -self.change_limit, self.change_limit)
-            # 仅对可调整的股票应用权重变化
-            current_weights[can_adjust_mask] += weight_changes_limited[can_adjust_mask]
-    
-            # 保存当日调整后的权重
-            adjusted_weights[day] = current_weights.copy()
-    
-            # 每50天打印一次处理时间
-            if day % 50 == 0:
-                print(f"处理第 {day+1}/{n_dates} 天, 单次耗时: {time.time() - _loop_start:.2f}秒")
-    
-        # 打印总耗时和平均每天耗时
-        print(f"\n权重调整总耗时: {time.time() - _start:.2f}秒")
-        print(f"平均每天耗时: {(time.time() - _start)/n_dates:.2f}秒")
-        return adjusted_weights
-
-    def plot_adjusted_weight_sums(self, adjusted_weights):
-        """绘制权重和变化图"""
         _start = time.time()
-        try:
-            adjusted_sums = np.sum(adjusted_weights, axis=1)
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=self.dates, y=adjusted_sums, mode='lines+markers', name='实际权重和'))
-            fig.add_hline(y=1.0, line=dict(color='#E74C3C', dash='dash'), opacity=0.5, name='目标权重和')
-            fig.update_layout(title={'text': '调整后权重和变化', 'y': 0.95, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20)},
-                              xaxis_title='时间', yaxis_title='权重和', template='plotly_white', showlegend=True,
-                              legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-                              xaxis=dict(tickangle=30, tickformat='%Y-%m-%d'), hovermode='x unified')
-            max_sum = max(adjusted_sums)
-            min_sum = min(adjusted_sums)
-            margin = (max_sum - min_sum) * 0.1
-            fig.update_yaxes(range=[min_sum - margin, max_sum + margin])
-            fig.show()
-        except Exception as e:
-            print(f"绘制图形时出错：{e}")
-        finally:
-            print(f"绘图耗时: {time.time() - _start:.2f}秒")
+        # 将维度改为时间点×股票
+        n_timestamps, n_codes = self.weights.shape
+        adjusted_weights = np.zeros_like(self.weights)
+        current_weights = self.weights[0].copy()
+    
+        # 修改为按分钟时间点循环
+        for ts_idx in range(n_timestamps):
+            _loop_start = time.time()
+            current_ts = self.dates[ts_idx]  # 获取完整时间戳
+            
+            # 获取分钟级交易状态（需确保DataSource支持分钟查询）
+            limit_status = self.data_source.get_limit_status(current_ts.date(), self.codes)
+            trade_status = self.data_source.get_trade_status(current_ts.date(), self.codes)
+            
+            # 使用时间戳维度的权重数据
+            target_weights = self.weights[ts_idx]
+            weight_changes = target_weights - current_weights
+            
+            # 向量化计算调整mask（提升性能）
+            can_adjust_mask = [
+                self.data_source.can_adjust_weight(code, chg, limit_status, trade_status)
+                for code, chg in zip(self.codes, weight_changes)
+            ]
+            
+            # 应用调整限制
+            weight_changes_limited = np.clip(weight_changes, -self.change_limit, self.change_limit)
+            current_weights[can_adjust_mask] += weight_changes_limited[can_adjust_mask]
+            adjusted_weights[ts_idx] = current_weights.copy()
+            
+            # 日志输出精确到分钟
+            if ts_idx % 100 == 0:
+                print(f"处理 {current_ts.strftime('%Y-%m-%d %H:%M')} 时间点, 单次耗时: {time.time() - _loop_start:.2f}秒")
+
+        print(f"\n权重调整总耗时: {time.time() - _start:.2f}秒")
+        print(f"平均每分钟耗时: {(time.time() - _start)/n_timestamps:.4f}秒")
+        return adjusted_weights
 
     @staticmethod
     def load_data(data_source, source_type):
-        """通用数据加载接口"""
         if source_type == 'csv':
             return PortfolioWeightAdjuster._from_csv(data_source)
         elif source_type == 'df':
@@ -188,7 +159,6 @@ class PortfolioWeightAdjuster:
 
     @staticmethod
     def _from_csv(csv_file_path):
-        """从CSV文件加载数据"""
         df = pd.read_csv(csv_file_path)
         time_col = 'datetime' if 'datetime' in df.columns else 'date'
         df[time_col] = pd.to_datetime(df[time_col])
@@ -204,37 +174,96 @@ class PortfolioWeightAdjuster:
                 code_idx = code_to_idx[row['code']]
                 weights_array[date_idx, code_idx] = row['weight']
         return weights_array, dates, all_codes
-# %%
-def w_adjust(source_type, change_limit, data_source, data_directory):
-    # 加载数据
-    weights_array, dates, codes = PortfolioWeightAdjuster.load_data(data_source, source_type)
-    adjuster = PortfolioWeightAdjuster(weights_array, dates, codes, change_limit, data_directory)
-    
-    # 验证权重和并调整权重
-    if adjuster.validate_weights_sum():
-        adjusted = adjuster.adjust_weights_over_days()
-        adjuster.plot_adjusted_weight_sums(adjusted)
+
+def generate_minute_frequency_data(df):
+    morning_time = pd.date_range(start='09:30', end='11:30', freq='min').time 
+    afternoon_time = pd.date_range(start='13:00', end='15:00', freq='min').time  
+    valid_times = list(morning_time) + list(afternoon_time)
+    expanded_df = pd.DataFrame()
+    for date in df['date'].unique():
+        for code in df['code'].unique():
+            temp_df = pd.DataFrame({'date': date, 'code': code, 'time': valid_times})
+            weight_data = df[(df['date'] == date) & (df['code'] == code)]['weight']
+            if not weight_data.empty:
+                weight = weight_data.iloc[0]
+                temp_df['weight'] = weight
+                expanded_df = pd.concat([expanded_df, temp_df], ignore_index=True)
+    return expanded_df
+
+def adjust_weights_to_minute_frequency(source_type, change_limit, data_source, data_directory):
+    # 主流程控制
+    try:
+        weights_array, dates, codes = _load_initial_data(source_type, data_source)
+        adjuster = _initialize_adjuster(weights_array, dates, codes, change_limit, data_directory)
+        _validate_weights(adjuster)
         
-        # 转换为长表格式并过滤权重为0的行
-        output_df = pd.DataFrame(adjusted, columns=codes, index=dates).reset_index()
-        long_format_df = output_df.melt(id_vars='index', var_name='code', value_name='weight')
-        long_format_df.rename(columns={'index': 'date'}, inplace=True)
-        long_format_df = long_format_df[long_format_df['weight'] != 0]
+        # 数据格式转换流水线
+        long_format_df = _convert_to_long_format(weights_array, dates, codes)
+        minute_frequency_df = _generate_initial_minute_data(long_format_df)
+        filtered_df = _clean_and_filter_data(minute_frequency_df)
         
-        # 按时间序列排序并保存为CSV文件
-        long_format_df.sort_values(by='date', inplace=True)
-        long_format_df.to_csv('adjusted_weights.csv', index=False)
-        print(f"调整后的权重已保存到: adjusted_weights.csv")
-    
-    return long_format_df
+        # 权重调整核心逻辑
+        adjusted_weights = _execute_weight_adjustment(adjuster, filtered_df)
+        processed_df = _process_adjusted_weights(adjusted_weights, dates, codes)
+        
+        # 最终输出处理
+        return _generate_final_output(processed_df)
+    except Exception as e:
+        print(f"处理流程异常终止: {str(e)}")
+        return None
+
+# 新定义的工具函数（保持原有功能）
+def _load_initial_data(source_type, data_source):
+    """加载初始权重数据"""
+    return PortfolioWeightAdjuster.load_data(data_source, source_type)
+
+def _initialize_adjuster(weights_array, dates, codes, change_limit, data_directory):
+    """初始化权重调整器"""
+    return PortfolioWeightAdjuster(weights_array, dates, codes, change_limit, data_directory)
+
+def _validate_weights(adjuster):
+    """执行权重验证"""
+    if not adjuster.validate_weights_sum():
+        raise ValueError("权重和验证失败")
+
+def _convert_to_long_format(weights_array, dates, codes):
+    """转换数据为长格式"""
+    return pd.DataFrame(weights_array, index=dates, columns=codes).reset_index().melt(
+        id_vars='index', var_name='code', value_name='weight').rename(columns={'index': 'date'})
+
+def _generate_initial_minute_data(df):
+    """生成初始分钟数据"""
+    return generate_minute_frequency_data(df)
+
+def _clean_and_filter_data(df):
+    """数据清洗过滤"""
+    return df[
+        (df['weight'] != 0) & 
+        (df['time'].between(pd.Timestamp('09:30').time(), pd.Timestamp('15:00').time()))
+    ].assign(datetime=lambda x: pd.to_datetime(x['date'].astype(str) + ' ' + x['time'].astype(str)))
+
+def _execute_weight_adjustment(adjuster, df):
+    """执行权重调整"""
+    return adjuster.adjust_weights_over_days()
+
+def _process_adjusted_weights(adjusted_weights, dates, codes):
+    """处理调整后的权重"""
+    return pd.DataFrame(adjusted_weights, columns=codes, index=dates).reset_index().melt(
+        id_vars='index', var_name='code', value_name='weight').rename(columns={'index': 'date'})
+
+def _generate_final_output(df):
+    """生成最终输出"""
+    final_df = generate_minute_frequency_data(df[df['weight'] != 0])
+    final_df = final_df.drop_duplicates(['date', 'time', 'code']).sort_values(['date', 'time'])
+    final_df.to_csv('adjusted_weights_minute.csv', columns=['date', 'time', 'code', 'weight'], index=False)
+    print(f"结果已保存至: adjusted_weights_minute.csv")
+    return final_df
 
 if __name__ == "__main__":
-    weight_list = w_adjust(
+    weight_list = adjust_weights_to_minute_frequency(
         source_type='csv',
         change_limit=0.05,
-        data_source='csv/test_minute_weight.csv',  
-        data_directory='D:\\Data'  
+        data_source='data/test_daily_weight.csv',
+        data_directory='D:\\Data'
     )
     print(weight_list)
-
-    

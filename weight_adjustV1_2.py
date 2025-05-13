@@ -142,27 +142,6 @@ class PortfolioWeightAdjuster:
         print(f"平均每个时间点耗时: {(time.time() - _start)/n_dates:.2f}秒")
         return adjusted_weights
 
-    def plot_adjusted_weight_sums(self, adjusted_weights):
-        _start = time.time()
-        try:
-            adjusted_sums = np.sum(adjusted_weights, axis=1)
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=self.dates, y=adjusted_sums, mode='lines+markers', name='实际权重和'))
-            fig.add_hline(y=1.0, line=dict(color='#E74C3C', dash='dash'), opacity=0.5, name='目标权重和')
-            fig.update_layout(title={'text': '调整后权重和变化', 'y': 0.95, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': dict(size=20)},
-                              xaxis_title='时间', yaxis_title='权重和', template='plotly_white', showlegend=True,
-                              legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-                              xaxis=dict(tickangle=30, tickformat='%Y-%m-%d'), hovermode='x unified')
-            max_sum = max(adjusted_sums)
-            min_sum = min(adjusted_sums)
-            margin = (max_sum - min_sum) * 0.1
-            fig.update_yaxes(range=[min_sum - margin, max_sum + margin])
-            fig.show()
-        except Exception as e:
-            print(f"绘制图形时出错：{e}")
-        finally:
-            print(f"绘图耗时: {time.time() - _start:.2f}秒")
-
     @staticmethod
     def load_data(data_source, source_type):
         if source_type == 'csv':
@@ -195,8 +174,8 @@ class PortfolioWeightAdjuster:
         return weights_array, dates, all_codes
 
 def generate_minute_frequency_data(df):
-    morning_time = pd.date_range(start='09:30', end='11:30', freq='T').time
-    afternoon_time = pd.date_range(start='13:00', end='15:00', freq='T').time
+    morning_time = pd.date_range(start='09:30', end='11:30', freq='min').time  # 将'T'改为'min'
+    afternoon_time = pd.date_range(start='13:00', end='15:00', freq='min').time  # 将'T'改为'min'
     valid_times = list(morning_time) + list(afternoon_time)
     expanded_df = pd.DataFrame()
     for date in df['date'].unique():
@@ -249,9 +228,8 @@ def adjust_weights_to_minute_frequency(source_type, change_limit, data_source, d
     cleaned_df['weight'] = cleaned_df.groupby(['date', 'code'])['weight'].bfill()
     
     # 步骤3：生成分钟频数据后新增时间合并步骤
-    cleaned_df = minute_frequency_df.copy()
-    cleaned_df['datetime'] = pd.to_datetime(  # 在清洗后的数据上操作
-        cleaned_df['date'].astype(str) + ' ' + cleaned_df['time'].astype(str)
+    cleaned_df = minute_frequency_df.copy().assign(  # 使用链式操作避免警告
+        datetime=lambda x: pd.to_datetime(x['date'].astype(str) + ' ' + x['time'].astype(str))
     )
     
     # 步骤4：执行权重调整（考虑涨跌停和交易状态限制）
