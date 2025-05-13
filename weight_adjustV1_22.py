@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 OUTPUT_DIR = Path(__file__).parent / 'output'
 from urllib.parse import quote_plus
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype, D1_6_numpy_dtype, D1_3_numpy_dtype
+import datetime
 
 def read_npq_file(file_path, dtype, columns):
     npq_data = np.fromfile(file_path, dtype=dtype)
@@ -249,8 +250,13 @@ def _generate_final_output(df):
     """生成最终输出"""
     final_df = generate_minute_frequency_data(df[df['weight'] != 0])
     final_df = final_df.drop_duplicates(['date', 'time', 'code']).sort_values(['date', 'time'])
-    final_df.to_csv('adjusted_weights_minute.csv', columns=['date', 'time', 'code', 'weight'], index=False)
-    print(f"结果已保存至: adjusted_weights_minute.csv")
+    
+    # 获取当前时间戳
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"adjusted_weights_minute_{timestamp}.csv"
+    
+    final_df.to_csv(file_name, columns=['date', 'time', 'code', 'weight'], index=False)
+    print(f"结果已保存至: {file_name}")
     return final_df
 
 if __name__ == "__main__":

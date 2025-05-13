@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 OUTPUT_DIR = Path(__file__).parent / 'output'
 from urllib.parse import quote_plus
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype, D1_6_numpy_dtype, D1_3_numpy_dtype
+import datetime
 
 def read_npq_file(file_path, dtype, columns):
     npq_data = np.fromfile(file_path, dtype=dtype)
@@ -273,11 +274,15 @@ def adjust_weights_to_minute_frequency(source_type, change_limit, data_source, d
     # 按日期和时间排序
     final_minute_df.sort_values(by=['date', 'time'], inplace=True)
     
+    # 获取当前时间戳
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     # 输出到CSV文件（格式：date, time, code, weight）
-    final_minute_df.to_csv('adjusted_weights_minute.csv', 
+    file_name = f"adjusted_weights_minute_{timestamp}.csv"
+    final_minute_df.to_csv(file_name, 
                           columns=['date', 'time', 'code', 'weight'],  # 新增列顺序指定
                           index=False)
-    print(f"调整后的分钟频权重已保存到: adjusted_weights_minute.csv")
+    print(f"调整后的分钟频权重已保存到: {file_name}")
     
     return final_minute_df
 
