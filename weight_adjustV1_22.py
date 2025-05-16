@@ -253,7 +253,7 @@ def _generate_final_output(df):
     
     # 获取当前时间戳
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_name = f"adjusted_weights_minute_{timestamp}.csv"
+    file_name = f"output/adjusted_weights_minute_{timestamp}.csv"
     
     final_df.to_csv(file_name, columns=['date', 'time', 'code', 'weight'], index=False)
     print(f"结果已保存至: {file_name}")
@@ -262,7 +262,7 @@ def _generate_final_output(df):
 if __name__ == "__main__":
     weight_list = adjust_weights_to_minute_frequency(
         source_type='csv',
-        change_limit=0.05,
+        change_limit=0.002,
         data_source='data/test_daily_weight.csv',
         data_directory='D:\\Data'
     )

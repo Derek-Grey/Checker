@@ -86,10 +86,10 @@ class DataChecker:
             if not invalid_times.empty:
                 raise ValueError(f"发现不符合格式的时间: \n{invalid_times['time'].unique()}")
             
-            morning_start = pd.to_datetime('09:30:00').time()
-            morning_end = pd.to_datetime('11:29:00').time()
-            afternoon_start = pd.to_datetime('13:00:00').time()
-            afternoon_end = pd.to_datetime('14:59:00').time()
+            morning_start = pd.to_datetime('09:31:00').time()
+            morning_end = pd.to_datetime('11:30:00').time()
+            afternoon_start = pd.to_datetime('13:01:00').time()
+            afternoon_end = pd.to_datetime('15:00:00').time()
             
             times_outside_trading = df[~(
                 ((times.dt.time >= morning_start) & (times.dt.time <= morning_end)) |
@@ -101,7 +101,7 @@ class DataChecker:
                 raise ValueError(
                     f"发现非交易时间数据：\n"
                     f"{non_trading_times}\n"
-                    f"交易时间为 09:30:00-11:29:00 和 13:00:00-14:59:00"
+                    f"交易时间为 09:30:00-11:30:00 和 13:00:00-15:00:00"
                 )
             
             print("时间格式和交易时间范围检查通过")
@@ -134,7 +134,7 @@ class DataChecker:
             
             if (curr_time.date() != prev_time.date() or
                 (prev_time.time() <= pd.to_datetime('11:30:00').time() and 
-                 curr_time.time() >= pd.to_datetime('13:00:00').time())):
+                 curr_time.time() >= pd.to_datetime('13:01:00').time())):
                 continue
             
             time_diffs.append((curr_time - prev_time).total_seconds())
@@ -173,12 +173,12 @@ class DataChecker:
         for date in all_dates:
             try:
                 morning_times = pd.date_range(
-                    f"{date.strftime('%Y-%m-%d')} 09:30:00",
+                    f"{date.strftime('%Y-%m-%d')} 09:31:00",
                     f"{date.strftime('%Y-%m-%d')} 11:30:00",
                     freq=f"{freq_minutes}min"
                 )
                 afternoon_times = pd.date_range(
-                    f"{date.strftime('%Y-%m-%d')} 13:00:00",
+                    f"{date.strftime('%Y-%m-%d')} 13:01:00",
                     f"{date.strftime('%Y-%m-%d')} 15:00:00",
                     freq=f"{freq_minutes}min"
                 )
@@ -327,11 +327,13 @@ class PortfolioMetrics:
     
         weights_wide = pd.DataFrame(self.weights_arr, index=self.dates, columns=self.codes)
         returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
-    
+        print(weights_wide)
+        print(returns_wide)
         portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
         
         turnover = pd.Series(index=weights_wide.index)
         turnover.iloc[0] = weights_wide.iloc[0].abs().sum()
+
         for i in range(1, len(weights_wide)):
             curr_weights = weights_wide.iloc[i]
             prev_weights = weights_wide.iloc[i-1]
@@ -387,6 +389,7 @@ class PortfolioMetrics:
             
             daily_results['date'] = daily_results.index.date
             daily_results = daily_results.groupby('date').last().reset_index()
+            daily_results.loc[daily_results.index[0], 'net_value'] = 1
             daily_filename = f'output/daily_summary_{timestamp}.csv'
             
             # 计算指数净值，初始值为1
@@ -496,8 +499,8 @@ class StrategyPlotter:
                     "title": "交易日序列",
                     "type": "category",
                     "tickmode": "array",
-                    "tickvals": df.index[::len(df)//10],
-                    "ticktext": df.index.strftime('%Y-%m-%d')[::len(df)//10]
+                    "tickvals": df.index[::len(df)//2],
+                    "ticktext": df.index.strftime('%Y-%m-%d')[::len(df)//2]
                 },
                 "legend": {"x": 0, "y": 1},
                 "hovermode": "x unified"
@@ -555,9 +558,9 @@ def backtest(data_directory, frequency, stock_path, return_file, use_equal_weigh
 if __name__ == "__main__":
     portfolio_returns, turnover= backtest(
         data_directory='D:\\Data',
-        frequency='daily',
-        stock_path=r'D:\Derek\Code\Checker\data\test_daily_weight.csv',
-        return_file=None,
+        frequency='minute',
+        stock_path=r'D:\Derek\Code\Checker\output12.csv',
+        return_file=r'D:\Derek\Code\Checker\output12.csv',
         use_equal_weights=True,
         plot_results=True
     )
