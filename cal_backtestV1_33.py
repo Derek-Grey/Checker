@@ -499,8 +499,8 @@ class StrategyPlotter:
                     "title": "交易日序列",
                     "type": "category",
                     "tickmode": "array",
-                    "tickvals": df.index[::len(df)//2],
-                    "ticktext": df.index.strftime('%Y-%m-%d')[::len(df)//2]
+                    "tickvals": df.index[::len(df)//10],
+                    "ticktext": df.index.strftime('%Y-%m-%d')[::len(df)//10]
                 },
                 "legend": {"x": 0, "y": 1},
                 "hovermode": "x unified"

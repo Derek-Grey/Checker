@@ -112,7 +112,7 @@ class JQDataDownloader:
 # 使用示例
 if __name__ == '__main__':
     downloader = JQDataDownloader('13788991423', 'Shdq2024')
-    csv_file_path = 'csv/aa.csv'  # 替换为你的CSV文件路径
+    csv_file_path = 'csv/mon33.csv'  # 替换为你的CSV文件路径
     df = downloader.read_csv_and_download(csv_file_path)
     df.to_csv('output12.csv', index=False)
     print(df)
