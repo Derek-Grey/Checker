@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 OUTPUT_DIR = Path(__file__).parent / 'output'
 from urllib.parse import quote_plus
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype, D1_6_numpy_dtype, D1_3_numpy_dtype
+import datetime
 
 def read_npq_file(file_path, dtype, columns):
     npq_data = np.fromfile(file_path, dtype=dtype)
@@ -107,36 +108,41 @@ class PortfolioWeightAdjuster:
 
     def adjust_weights_over_days(self):
         _start = time.time()
-        # 将维度改为时间点×股票
         n_timestamps, n_codes = self.weights.shape
         adjusted_weights = np.zeros_like(self.weights)
         current_weights = self.weights[0].copy()
     
-        # 修改为按分钟时间点循环
         for ts_idx in range(n_timestamps):
             _loop_start = time.time()
-            current_ts = self.dates[ts_idx]  # 获取完整时间戳
+            current_ts = self.dates[ts_idx]  # 获取完整时间戳，包括日期和时间
             
-            # 获取分钟级交易状态（需确保DataSource支持分钟查询）
+            # 获取分钟级交易状态
             limit_status = self.data_source.get_limit_status(current_ts.date(), self.codes)
             trade_status = self.data_source.get_trade_status(current_ts.date(), self.codes)
             
-            # 使用时间戳维度的权重数据
             target_weights = self.weights[ts_idx]
             weight_changes = target_weights - current_weights
             
-            # 向量化计算调整mask（提升性能）
-            can_adjust_mask = [
+            # 创建可调整的掩码
+            can_adjust_mask = np.array([
                 self.data_source.can_adjust_weight(code, chg, limit_status, trade_status)
                 for code, chg in zip(self.codes, weight_changes)
-            ]
+            ])
             
-            # 应用调整限制
-            weight_changes_limited = np.clip(weight_changes, -self.change_limit, self.change_limit)
-            current_weights[can_adjust_mask] += weight_changes_limited[can_adjust_mask]
+            # 限制权重变化幅度
+            weight_changes_limited = np.zeros_like(weight_changes)
+            for i in range(n_codes):
+                if can_adjust_mask[i]:
+                    # 严格限制在change_limit范围内
+                    if weight_changes[i] > 0:
+                        weight_changes_limited[i] = min(weight_changes[i], self.change_limit)
+                    else:
+                        weight_changes_limited[i] = max(weight_changes[i], -self.change_limit)
+            
+            # 更新当前权重
+            current_weights = current_weights + weight_changes_limited
             adjusted_weights[ts_idx] = current_weights.copy()
             
-            # 日志输出精确到分钟
             if ts_idx % 100 == 0:
                 print(f"处理 {current_ts.strftime('%Y-%m-%d %H:%M')} 时间点, 单次耗时: {time.time() - _loop_start:.2f}秒")
 
@@ -191,78 +197,137 @@ def generate_minute_frequency_data(df):
     return expanded_df
 
 def adjust_weights_to_minute_frequency(source_type, change_limit, data_source, data_directory):
-    # 主流程控制
+    """
+    根据输入的权重数据，先生成分钟频率数据，再应用交易限制进行调整
+    
+    参数:
+        source_type: 数据源类型，'csv'或'df'
+        change_limit: 每次调整的最大权重变化
+        data_source: 数据源路径或DataFrame
+        data_directory: 市场数据目录
+    """
     try:
-        weights_array, dates, codes = _load_initial_data(source_type, data_source)
-        adjuster = _initialize_adjuster(weights_array, dates, codes, change_limit, data_directory)
-        _validate_weights(adjuster)
+        # 1. 数据加载与初始化
+        weights_array, dates, codes = PortfolioWeightAdjuster.load_data(data_source, source_type)
         
-        # 数据格式转换流水线
-        long_format_df = _convert_to_long_format(weights_array, dates, codes)
-        minute_frequency_df = _generate_initial_minute_data(long_format_df)
-        filtered_df = _clean_and_filter_data(minute_frequency_df)
+        # 2. 转换为长格式并生成分钟频率数据
+        long_format = pd.DataFrame(weights_array, index=dates, columns=codes).reset_index().melt(
+            id_vars='index', var_name='code', value_name='weight'
+        ).rename(columns={'index': 'date'})
         
-        # 权重调整核心逻辑
-        adjusted_weights = _execute_weight_adjustment(adjuster, filtered_df)
-        processed_df = _process_adjusted_weights(adjusted_weights, dates, codes)
+        minute_df = generate_minute_frequency_data(long_format[long_format['weight'] > 0])
+        minute_df = minute_df.drop_duplicates(['date', 'time', 'code']).sort_values(['date', 'time'])
         
-        # 最终输出处理
-        return _generate_final_output(processed_df)
+        # 3. 创建分钟级别的时间戳
+        minute_df['datetime'] = pd.to_datetime(
+            minute_df['date'].astype(str) + ' ' + minute_df['time'].astype(str)
+        )
+        
+        # 4. 转换为宽格式用于权重调整
+        pivot_df = minute_df.pivot_table(
+            index='datetime', columns='code', values='weight'
+        ).fillna(0)
+        
+        # 保存调整前的权重数据，用于后续比较
+        original_weights = pivot_df.copy()
+        
+        # 5. 创建调整器并验证权重
+        minute_adjuster = PortfolioWeightAdjuster(
+            pivot_df.values, 
+            pivot_df.index, 
+            pivot_df.columns, 
+            change_limit, 
+            data_directory
+        )
+        
+        if not minute_adjuster.validate_weights_sum():
+            raise ValueError("分钟频率数据权重和验证失败")
+        
+        # 6. 执行权重调整
+        adjusted_weights = minute_adjuster.adjust_weights_over_days()
+        
+        # 7. 结果处理与输出
+        result_df = pd.DataFrame(
+            adjusted_weights, 
+            columns=pivot_df.columns, 
+            index=pivot_df.index
+        )
+        
+        # 8. 统计调整前后的变化
+        print("\n===== 权重调整前后变化统计 =====")
+        
+        # 计算每个时间点的权重变化总量
+        total_change_by_time = np.abs(result_df.values - original_weights.values).sum(axis=1)
+        avg_change_by_time = total_change_by_time.mean()
+        max_change_by_time = total_change_by_time.max()
+        min_change_by_time = total_change_by_time.min()
+        
+        print(f"每个时间点平均权重变化总量: {avg_change_by_time:.6f}")
+        print(f"最大权重变化时间点变化总量: {max_change_by_time:.6f}")
+        print(f"最小权重变化时间点变化总量: {min_change_by_time:.6f}")
+        
+        # 计算每只股票的权重变化总量
+        total_change_by_stock = np.abs(result_df.values - original_weights.values).sum(axis=0)
+        avg_change_by_stock = total_change_by_stock.mean()
+        max_change_by_stock = total_change_by_stock.max()
+        max_change_stock = pivot_df.columns[np.argmax(total_change_by_stock)]
+        
+        print(f"每只股票平均权重变化总量: {avg_change_by_stock:.6f}")
+        print(f"最大权重变化股票: {max_change_stock}, 变化总量: {max_change_by_stock:.6f}")
+        
+        # 计算调整前后权重和的差异
+        original_sum = original_weights.sum(axis=1)
+        adjusted_sum = result_df.sum(axis=1)
+        sum_diff = adjusted_sum - original_sum
+        
+        print(f"调整前权重和平均值: {original_sum.mean():.6f}")
+        print(f"调整后权重和平均值: {adjusted_sum.mean():.6f}")
+        print(f"权重和差异最大值: {sum_diff.abs().max():.6f}")
+        
+        # 统计调整幅度超过change_limit的次数
+        changes = np.abs(result_df.values - original_weights.values)
+        exceed_limit_count = (changes > change_limit).sum()
+        
+        if exceed_limit_count > 0:
+            print(f"警告: 有 {exceed_limit_count} 次调整幅度超过了设定的change_limit ({change_limit})")
+        else:
+            print(f"所有调整幅度均未超过设定的change_limit ({change_limit})")
+        
+        # 9. 转换回长格式
+        adjusted_long = result_df.reset_index().melt(
+            id_vars='datetime', var_name='code', value_name='weight'
+        )
+        
+        # 10. 提取日期和时间
+        adjusted_long['date'] = adjusted_long['datetime'].dt.date
+        adjusted_long['time'] = adjusted_long['datetime'].dt.time
+        
+        # 11. 过滤并排序
+        final_df = adjusted_long[adjusted_long['weight'] > 0].sort_values(['date', 'time'])
+        
+        # 确保输出目录存在
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # 生成输出文件名
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = OUTPUT_DIR / f"adjusted_weights_minute_{timestamp}.csv"
+        
+        # 保存结果
+        final_df.to_csv(file_name, columns=['date', 'time', 'code', 'weight'], index=False)
+        print(f"结果已保存至: {file_name}")
+        
+        return final_df
+        
     except Exception as e:
         print(f"处理流程异常终止: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
-
-# 新定义的工具函数（保持原有功能）
-def _load_initial_data(source_type, data_source):
-    """加载初始权重数据"""
-    return PortfolioWeightAdjuster.load_data(data_source, source_type)
-
-def _initialize_adjuster(weights_array, dates, codes, change_limit, data_directory):
-    """初始化权重调整器"""
-    return PortfolioWeightAdjuster(weights_array, dates, codes, change_limit, data_directory)
-
-def _validate_weights(adjuster):
-    """执行权重验证"""
-    if not adjuster.validate_weights_sum():
-        raise ValueError("权重和验证失败")
-
-def _convert_to_long_format(weights_array, dates, codes):
-    """转换数据为长格式"""
-    return pd.DataFrame(weights_array, index=dates, columns=codes).reset_index().melt(
-        id_vars='index', var_name='code', value_name='weight').rename(columns={'index': 'date'})
-
-def _generate_initial_minute_data(df):
-    """生成初始分钟数据"""
-    return generate_minute_frequency_data(df)
-
-def _clean_and_filter_data(df):
-    """数据清洗过滤"""
-    return df[
-        (df['weight'] != 0) & 
-        (df['time'].between(pd.Timestamp('09:30').time(), pd.Timestamp('15:00').time()))
-    ].assign(datetime=lambda x: pd.to_datetime(x['date'].astype(str) + ' ' + x['time'].astype(str)))
-
-def _execute_weight_adjustment(adjuster, df):
-    """执行权重调整"""
-    return adjuster.adjust_weights_over_days()
-
-def _process_adjusted_weights(adjusted_weights, dates, codes):
-    """处理调整后的权重"""
-    return pd.DataFrame(adjusted_weights, columns=codes, index=dates).reset_index().melt(
-        id_vars='index', var_name='code', value_name='weight').rename(columns={'index': 'date'})
-
-def _generate_final_output(df):
-    """生成最终输出"""
-    final_df = generate_minute_frequency_data(df[df['weight'] != 0])
-    final_df = final_df.drop_duplicates(['date', 'time', 'code']).sort_values(['date', 'time'])
-    final_df.to_csv('adjusted_weights_minute.csv', columns=['date', 'time', 'code', 'weight'], index=False)
-    print(f"结果已保存至: adjusted_weights_minute.csv")
-    return final_df
 
 if __name__ == "__main__":
     weight_list = adjust_weights_to_minute_frequency(
         source_type='csv',
-        change_limit=0.05,
+        change_limit=0.0002,
         data_source='data/test_daily_weight.csv',
         data_directory='D:\\Data'
     )
