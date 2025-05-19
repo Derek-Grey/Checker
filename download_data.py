@@ -24,7 +24,7 @@ class JQDataDownloader:
         time_s = str(self.the_date) + ' ' + '09:30:00'
         time_e = str(self.the_date) + ' ' + '15:00:00'
         try:
-            df_m = jq.get_price(codes_jq, fields=['close'],
+            df_m = jq.get_price(codes_jq, fields=['open'],
                                 fill_paused=True, panel=False, skip_paused=False, fq='none', frequency='1m',
                                 start_date=time_s, end_date=time_e)
             df_m.dropna(inplace=True)
@@ -32,7 +32,7 @@ class JQDataDownloader:
             df_m['time'] = df_m.time.apply(lambda x: str(x)[-8:])
             
             # 计算 return
-            df_m['return'] = df_m['close'].pct_change().fillna(0)
+            df_m['return'] = df_m['open'].pct_change().fillna(0)
             
             df_m.rename(columns={'code': 'code_jq'}, inplace=True)
             df_m.insert(2, 'code', df_m.code_jq.transform(lambda x: 'SH' + x[:6] if x.startswith('6') else 'SZ' + x[:6]))
@@ -114,5 +114,5 @@ if __name__ == '__main__':
     downloader = JQDataDownloader('13788991423', 'Shdq2024')
     csv_file_path = 'csv/mon33.csv'  # 替换为你的CSV文件路径
     df = downloader.read_csv_and_download(csv_file_path)
-    df.to_csv('output12.csv', index=False)
+    df.to_csv('output01.csv', index=False)
     print(df)

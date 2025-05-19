@@ -238,7 +238,7 @@ if __name__ == "__main__":
     weight_list = w_adjust(
         source_type='csv',
         change_limit=0.05,
-        data_source='csv/test_daily_weight.csv',  
+        data_source='csv/test_minute_weight.csv',  
         data_directory='D:\\Data'  
     )
     print(weight_list)

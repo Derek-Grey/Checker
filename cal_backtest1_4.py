@@ -299,7 +299,7 @@ class PortfolioMetrics:
         
         if self.use_equal_weights:
             print("使用等权重")
-            weights_per_date = 1 / weights_df.groupby(date_col)['code'].transform('count').values
+            weights_per_date = 1.0 / weights_df.groupby(date_col)['code'].transform('count').values
             for idx, row in weights_df.iterrows():
                 i = date_idx[row[date_col]]
                 j = code_idx[row['code']]
@@ -319,7 +319,7 @@ class PortfolioMetrics:
             returns_arr[i, j] = row['return']
         
         return dates, codes, weights_arr, returns_arr
-    
+   
     def calculate_portfolio_metrics(self, turn_loss: float = 0.003):
         """计算投资组合的收益率、换手率及带成本的净值"""
         start_time = time.time()
@@ -327,21 +327,14 @@ class PortfolioMetrics:
     
         weights_wide = pd.DataFrame(self.weights_arr, index=self.dates, columns=self.codes)
         returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
-        weights_wide = weights_wide.fillna(0)
-        returns_wide = returns_wide.fillna(0)
-        print(returns_wide)
         print(weights_wide)
+        print(returns_wide)
         portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
         
-        # 初始化换手率相关列
+        # 修改换手率计算
         turnover = pd.Series(index=weights_wide.index)
-        passive_turnover = pd.Series(index=weights_wide.index)
-        active_turnover = pd.Series(index=weights_wide.index)
-        
         # 第一个时间点的换手率应该是从0到初始权重的变化
         turnover.iloc[0] = weights_wide.iloc[0][weights_wide.iloc[0] > 0].sum()
-        active_turnover.iloc[0] = turnover.iloc[0]  # 初始建仓全部是主动换手
-        passive_turnover.iloc[0] = 0  # 初始没有被动换手
 
         for i in range(1, len(weights_wide)):
             curr_weights = weights_wide.iloc[i]
@@ -359,21 +352,13 @@ class PortfolioMetrics:
                 theoretical_weights = prev_weights.copy()
                 if prev_weights.sum() > 0:
                     theoretical_weights = theoretical_weights / prev_weights.sum()
-            
-            # 被动换手率：前一天权重与理论权重的差异
-            passive_turnover.iloc[i] = np.abs(prev_weights - theoretical_weights).sum() / 2
-            
-            # 主动换手率：当前权重与理论权重的差异
-            active_turnover.iloc[i] = np.abs(curr_weights - theoretical_weights).sum() / 2
-            
-            # 总换手率（使用主动换手率）
-            turnover.iloc[i] = active_turnover.iloc[i]
+                
+            # 计算换手率（单边）
+            turnover.iloc[i] = np.abs(curr_weights - theoretical_weights).sum() / 2
     
         df = pd.DataFrame({
             'portfolio_return': portfolio_returns,
-            'turnover': turnover,
-            'passive_turnover': passive_turnover,
-            'active_turnover': active_turnover
+            'turnover': turnover
         })
         print(df)
         
@@ -384,13 +369,12 @@ class PortfolioMetrics:
         df['chg_'] = df['portfolio_return'] - df['turnover'] * df['loss']
         
         # 修改净值计算，初始净值应该扣除初始建仓成本
-        df['net_value'] = 1.0 - df['turnover'].iloc[0] * df['loss'].iloc[0] 
-        
+        df['net_value'] = 1.0 - df['turnover'].iloc[0] * df['loss'].iloc[0]  # 扣除初始建仓成本
         # 从第二个时间点开始累积计算净值
         df['net_value'].iloc[1:] = (df['chg_'].iloc[1:] + 1).cumprod() * df['net_value'].iloc[0]
         
         df.index = pd.to_datetime(df.index)
-        
+        # 从MongoDB获取pct_chg数据
         client = get_client_U('r')
         db = client['basic_wind']
         collection = db['ww_index8841431Daily']
@@ -402,8 +386,6 @@ class PortfolioMetrics:
         results = pd.DataFrame({
             'portfolio_return': df['portfolio_return'],
             'turnover': df['turnover'],
-            'passive_turnover': df['passive_turnover'],
-            'active_turnover': df['active_turnover'],
             'net_value': df['net_value'],
             'pct_chg': df['pct_chg']
         }, index=pd.to_datetime(self.dates))
@@ -422,19 +404,14 @@ class PortfolioMetrics:
             minute_results.to_csv(filename)
             print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
             
-            # 计算每日收益率总和
-            daily_sum_returns = results.groupby('date')['portfolio_return'].sum()
-            
             daily_results['date'] = daily_results.index.date
             daily_results = daily_results.groupby('date').last().reset_index()
-            # 添加每日收益率总和列
-            daily_results['daily_sum_return'] = daily_results['date'].map(daily_sum_returns)
             daily_results.loc[daily_results.index[0], 'net_value'] = 1
             daily_filename = f'output/daily_summary_{timestamp}.csv'
             
-            # 计算指数净值，保留第一天的实际收益
+            # 计算指数净值，初始值为1
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
-            daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
+            daily_results['index_net_value'] *= 1 / daily_results['index_net_value'].iloc[0]  # 确保初始值为1
             daily_results.to_csv(daily_filename, index=False)
             print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
         else:
@@ -442,11 +419,12 @@ class PortfolioMetrics:
             results = results.reset_index(drop=True)
             results = results[['date', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
             
-            # 计算指数净值，保留第一天的实际收益
-            daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
-            daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
-            daily_results.to_csv(daily_filename, index=False)
-            print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
+            # 计算指数净值，初始值为1
+            results['index_net_value'] = (results['pct_chg'] + 1).cumprod()
+            results['index_net_value'] *= 1 / results['index_net_value'].iloc[0]  # 确保初始值为1
+            daily_filename = filename
+            results.to_csv(daily_filename, index=False)
+            print(f"已保存日频数据，共 {len(results)} 行")
     
         print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
@@ -598,8 +576,8 @@ if __name__ == "__main__":
     portfolio_returns, turnover= backtest(
         data_directory='D:\\Data',
         frequency='minute',
-        stock_path=r'D:\Derek\Code\Checker\output112.csv',
-        return_file=r'D:\Derek\Code\Checker\output112.csv',
+        stock_path=r'D:\Derek\Code\Checker\output12.csv',
+        return_file=r'D:\Derek\Code\Checker\output12.csv',
         use_equal_weights=True,
         plot_results=True
     )
