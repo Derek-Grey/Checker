@@ -328,7 +328,7 @@ if __name__ == "__main__":
     weight_list = adjust_weights_to_minute_frequency(
         source_type='csv',
         change_limit=0.0002,
-        data_source='data/test_daily_weight.csv',
+        data_source='D:\\Derek\\Code\\Keven_wang\\mon3411.csv',
         data_directory='D:\\Data'
     )
     print(weight_list)

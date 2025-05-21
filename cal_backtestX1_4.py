@@ -210,7 +210,7 @@ class DataChecker:
 
 class PortfolioMetrics:
     """投资组合指标计算器类"""
-    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type):
+    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss):
         self.stock_path = stock_path
         self.return_path = return_path
         self.use_equal_weights = use_equal_weights
@@ -221,6 +221,7 @@ class PortfolioMetrics:
         self.index_cols = None
         self.is_minute = None
         self.prepare_data()
+        self.turn_loss = turn_loss
 
     def prepare_data(self):
         """为投资组合指标计算准备数据。"""
@@ -329,7 +330,7 @@ class PortfolioMetrics:
         
         return dates, codes, weights_arr, returns_arr
     
-    def calculate_portfolio_metrics(self,turn_loss):
+    def calculate_portfolio_metrics(self, turn_loss):
         """计算投资组合的收益率、换手率及带成本的净值"""
         start_time = time.time()
         is_minute = self.is_minute
@@ -338,8 +339,6 @@ class PortfolioMetrics:
         returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
         weights_wide = weights_wide.fillna(0)
         returns_wide = returns_wide.fillna(0)
-        print(returns_wide)
-        print(weights_wide)
         portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
         
         # 初始化换手率相关列
@@ -459,7 +458,7 @@ class PortfolioMetrics:
     
         print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return portfolio_returns, turnover, daily_filename
+        return daily_results, minute_results, daily_filename
 
 class StrategyPlotter:
     """策略绘图类"""
@@ -607,7 +606,8 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
         return_path=return_path,
         use_equal_weights=use_equal_weights,
         data_directory=data_directory,
-        input_type=input_type
+        input_type=input_type,
+        turn_loss=turn_loss
     )
     
     # 计算投资组合指标
@@ -626,9 +626,12 @@ if __name__ == "__main__":
         data_directory='D:\\Data',
         turn_loss=0.003,
         frequency='minute',
-        stock_path=r'D:\Derek\Code\Checker\output112.csv',
-        return_path=r'D:\Derek\Code\Checker\output112.csv',
+        stock_path=r'D:\\Derek\\Code\\Keven_wang\\output341.csv',
+        return_path=r'D:\\Derek\\Code\\Keven_wang\\output341.csv',
         use_equal_weights=True,
         plot_results=True,
-        input_type='csv'  # 默认使用csv文件作为输入
+        input_type='csv'  
     )
+    print(portfolio_returns)
+    print(turnover)
+    print('完成')

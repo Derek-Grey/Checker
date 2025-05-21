@@ -598,8 +598,8 @@ if __name__ == "__main__":
     portfolio_returns, turnover= backtest(
         data_directory='D:\\Data',
         frequency='minute',
-        stock_path=r'D:\Derek\Code\Checker\output112.csv',
-        return_file=r'D:\Derek\Code\Checker\output112.csv',
+        stock_path=r'D:\\Derek\\Code\\Checker\data\\output112.csv',
+        return_file=r'D:\\Derek\\Code\\Checker\data\\output112.csv',
         use_equal_weights=True,
         plot_results=True
     )
