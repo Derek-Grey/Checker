@@ -1,3 +1,23 @@
+'''
+Created on 2025年05月22日
+author: Derek
+Data dictionary:
+    date：日期
+    code：股票代码
+    initial_weight：初始权重
+    target_weight：目标权重
+    weight_diff：权重偏差
+    final_weight：最终权重
+    completed：是否完成
+    is_sell：是否卖出
+    completion_time：完成时间
+    session：是否完成
+    minutes_taken：完成时间点
+    remaining_diff：剩余未完成部分
+    operation_type：操作类型
+
+'''
+
 import pandas as pd
 import numpy as np
 import os
@@ -74,6 +94,9 @@ class WeightAdjuster:
         # 获取所有唯一日期
         unique_dates = sorted(daily_weights_df['date'].unique())
         
+        # 跟踪所有出现过的股票代码
+        all_codes = set(daily_weights_df['code'].unique())
+        
         # 对每个日期进行处理
         for i, date in enumerate(unique_dates):
             print(f"处理日期: {date}")
@@ -85,7 +108,7 @@ class WeightAdjuster:
             # 获取前一天的最终权重作为当天的初始权重
             if i == 0:
                 # 第一天的初始权重为0
-                initial_weights_dict = {code: 0 for code in target_weights['code']}
+                initial_weights_dict = {code: 0 for code in all_codes}
             else:
                 # 获取前一天的最后一个分钟的权重
                 prev_date = unique_dates[i-1]
@@ -96,10 +119,18 @@ class WeightAdjuster:
                 prev_last_weights = [w for w in minute_weights if w['datetime'] == prev_last_minute]
                 initial_weights_dict = {w['code']: w['weight'] for w in prev_last_weights}
                 
-                # 确保当天所有股票代码都有初始权重
-                for code in target_weights['code']:
+                # 确保所有出现过的股票代码都有初始权重
+                for code in all_codes:
                     if code not in initial_weights_dict:
                         initial_weights_dict[code] = 0
+            
+            # 找出当天需要卖出的股票（前一天有权重但今天没有出现在目标权重中）
+            sell_codes = []
+            for code in all_codes:
+                if code not in target_weights_dict and initial_weights_dict.get(code, 0) > 0:
+                    sell_codes.append(code)
+                    # 为需要卖出的股票添加目标权重为0的记录
+                    target_weights_dict[code] = 0
             
             # 生成当天的交易分钟
             trading_minutes = self._generate_trading_minutes(date)
@@ -109,18 +140,23 @@ class WeightAdjuster:
             daily_completion = {}
             
             # 对每个股票代码计算分钟权重
-            for code in target_weights['code']:
-                target_weight = target_weights_dict[code]
+            for code in list(target_weights_dict.keys()) + sell_codes:
+                # 去重
+                if code in daily_completion:
+                    continue
+                    
+                target_weight = target_weights_dict.get(code, 0)
                 initial_weight = initial_weights_dict.get(code, 0)
                 
                 # 计算每分钟需要调整的权重
                 weight_diff = target_weight - initial_weight
                 
+                # 如果初始权重为0且目标权重也为0，则跳过
+                if initial_weight == 0 and target_weight == 0:
+                    continue
+                
                 # 严格按照最大变化限制调整
-                weight_change_per_minute = np.sign(weight_diff) * min(
-                    self.max_change_per_minute,
-                    abs(weight_diff) / 1  # 这里改为1，表示每分钟最多变化max_change_per_minute
-                )
+                weight_change_per_minute = np.sign(weight_diff) * min(self.max_change_per_minute,abs(weight_diff) / 1)
                 
                 # 计算每分钟的权重
                 current_weight = initial_weight
@@ -149,6 +185,8 @@ class WeightAdjuster:
                         completion_minute = minute
                 
                 # 记录完成情况
+                is_sell = target_weight == 0 and initial_weight > 0
+                
                 daily_completion[code] = {
                     'date': date,
                     'code': code,
@@ -156,7 +194,8 @@ class WeightAdjuster:
                     'target_weight': target_weight,
                     'weight_diff': weight_diff,
                     'final_weight': current_weight,
-                    'completed': weight_completed
+                    'completed': weight_completed,
+                    'is_sell': is_sell
                 }
                 
                 if weight_completed:
@@ -182,8 +221,9 @@ class WeightAdjuster:
         minute_weights_df = pd.DataFrame(minute_weights)
         
         # 添加日期和时间列
-        minute_weights_df['date'] = minute_weights_df['datetime'].dt.date
-        minute_weights_df['time'] = minute_weights_df['datetime'].dt.time
+        if not minute_weights_df.empty:
+            minute_weights_df['date'] = minute_weights_df['datetime'].dt.date
+            minute_weights_df['time'] = minute_weights_df['datetime'].dt.time
         
         # 创建权重完成时间统计DataFrame
         completion_stats_df = pd.DataFrame(completion_stats)
@@ -232,13 +272,17 @@ def adjust(input_file, max_change):
     # 保存权重完成时间统计
     completion_stats_file = os.path.join(output_dir, f"weight_completion_stats_{timestamp}.csv")
     if not completion_stats.empty:
+        # 添加操作类型列
+        completion_stats['operation_type'] = completion_stats.apply(
+            lambda x: "卖出" if x.get('is_sell', False) else 
+                     ("买入" if x['initial_weight'] == 0 and x['target_weight'] > 0 else
+                     ("加仓" if x['target_weight'] > x['initial_weight'] else
+                     ("减仓" if x['target_weight'] < x['initial_weight'] else "持平"))), axis=1)
+        
         # 确保completion_time列是字符串格式，避免NaN值导致的问题
         completion_stats['completion_time'] = completion_stats['completion_time'].astype(str)
         completion_stats.to_csv(completion_stats_file, index=False)
         print(f"权重完成时间统计已保存至 {completion_stats_file}")
-    
-    # 输出每日每股票完成时间统计表格
-    print("\n每日股票权重完成时间统计表格:")
     
     # 按日期分组统计
     completion_by_date = defaultdict(list)
@@ -247,14 +291,7 @@ def adjust(input_file, max_change):
     
     # 输出每日统计表格
     for date, stats in sorted(completion_by_date.items()):
-        print(f"\n日期: {date}")
-        
-        # 创建表格头部
-        header = "| 股票代码 | 初始权重 | 目标权重 | 完成时间 | 用时(分钟) | 状态 |"
-        separator = "| -------- | -------- | -------- | -------- | ---------- | ---- |"
-        print(header)
-        print(separator)
-        
+
         # 按完成时间排序
         sorted_stats = sorted(stats, key=lambda x: (not x['completed'], 
                                                    x['minutes_taken'] if x['completed'] else float('inf')))
@@ -265,6 +302,18 @@ def adjust(input_file, max_change):
             initial_weight = f"{stat['initial_weight']:.4f}"
             target_weight = f"{stat['target_weight']:.4f}"
             
+            # 确定操作类型
+            if stat.get('is_sell', False):
+                operation_type = "卖出"
+            elif stat['initial_weight'] == 0 and stat['target_weight'] > 0:
+                operation_type = "买入"
+            elif stat['target_weight'] > stat['initial_weight']:
+                operation_type = "加仓"
+            elif stat['target_weight'] < stat['initial_weight']:
+                operation_type = "减仓"
+            else:
+                operation_type = "持平"
+            
             if stat['completed']:
                 completion_time = str(stat['completion_time'])
                 minutes_taken = str(stat['minutes_taken'])
@@ -274,14 +323,14 @@ def adjust(input_file, max_change):
                 minutes_taken = "-"
                 status = f"剩余差异: {stat['remaining_diff']:.4f}"
             
-            row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} |"
-            print(row)
-        
+            row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} | {operation_type} |"
+
         # 输出统计信息
         completed = [s for s in stats if s['completed']]
         not_completed = [s for s in stats if not s['completed']]
+        sell_operations = [s for s in stats if s.get('is_sell', False)]
         
-        print(f"\n总结: 总股票数 {len(stats)}, 已完成 {len(completed)}, 未完成 {len(not_completed)}")
+        print(f"{date} 总结: 总股票数 {len(stats)}, 已完成 {len(completed)}, 未完成 {len(not_completed)}, 卖出操作 {len(sell_operations)}")
         
         if completed:
             am_completed = [s for s in completed if s['session'] == '上午']
@@ -290,7 +339,7 @@ def adjust(input_file, max_change):
             
             print(f"上午完成: {len(am_completed)}, 下午完成: {len(pm_completed)}, 平均用时: {avg_minutes:.2f}分钟")
     
-    print(f"\n分钟频权重调整完成，共生成 {len(minute_weights)} 条记录")
+    print(f"分钟频权重调整完成，共生成 {len(minute_weights)} 条记录")
     print(f"结果已保存至 {output_file}")
     
     return minute_weights, completion_stats
@@ -299,5 +348,5 @@ if __name__ == "__main__":
     # 使用原始字符串r前缀或双反斜杠来避免转义问题
     minute_weights, completion_stats = adjust(
         input_file=r"D:\Derek\Code\Checker\csv\mon3.csv",  # 使用r前缀
-        max_change=0.000025
+        max_change=0.00001
     )
