@@ -224,6 +224,9 @@ class WeightAdjuster:
         if not minute_weights_df.empty:
             minute_weights_df['date'] = minute_weights_df['datetime'].dt.date
             minute_weights_df['time'] = minute_weights_df['datetime'].dt.time
+            
+            # 按照datetime时间顺序排序
+            minute_weights_df = minute_weights_df.sort_values(by='datetime')
         
         # 创建权重完成时间统计DataFrame
         completion_stats_df = pd.DataFrame(completion_stats)
