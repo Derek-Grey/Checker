@@ -101,7 +101,7 @@ class DataChecker:
                 raise ValueError(
                     f"发现非交易时间数据：\n"
                     f"{non_trading_times}\n"
-                    f"交易时间为 09:30:00-11:30:00 和 13:00:00-15:00:00"
+                    f"交易时间为 09:31:00-11:30:00 和 13:01:00-15:00:00"
                 )
             
             print("时间格式和交易时间范围检查通过")
@@ -210,22 +210,29 @@ class DataChecker:
 
 class PortfolioMetrics:
     """投资组合指标计算器类"""
-    def __init__(self, weight_file, return_file=None, use_equal_weights=True, data_directory='D:\\Data'):
-        self.weight_file = weight_file
-        self.return_file = return_file
+    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss):
+        self.stock_path = stock_path
+        self.return_path = return_path
         self.use_equal_weights = use_equal_weights
         self.data_directory = data_directory
+        self.input_type = input_type
         self.weights = None
         self.returns = None
         self.index_cols = None
         self.is_minute = None
         self.prepare_data()
+        self.turn_loss = turn_loss
 
     def prepare_data(self):
         """为投资组合指标计算准备数据。"""
         start_time = time.time()
         
-        weights_df = pd.read_csv(self.weight_file)
+        # 根据输入类型读取权重数据
+        if self.input_type == 'csv':
+            weights_df = pd.read_csv(self.stock_path)
+        else:  
+            weights_df = stock_path.copy()
+            
         self._validate_weights(weights_df)
         self.weights = weights_df
         returns_df = self._fetch_returns(weights_df)
@@ -238,7 +245,7 @@ class PortfolioMetrics:
 
     def _fetch_returns(self, weights_df):
         """从文件或数据库获取收益率数据"""
-        if self.return_file is None:
+        if self.return_path is None:
             print("\n未提供收益率数据文件，将从数据库获取收益率数据...")
             unique_dates = weights_df['date'].unique()
             unique_codes = weights_df['code'].unique()
@@ -248,7 +255,10 @@ class PortfolioMetrics:
             print(f"成功从数据库获取了 {len(returns)} 条收益率记录")
             return returns
         else:
-            return pd.read_csv(self.return_file)
+            if self.input_type == 'csv':
+                return pd.read_csv(self.return_path)
+            else: 
+                return self.return_path.copy()
 
     def get_returns_from_db(self, start_date, end_date, codes):
         """从数据库获取收益率数据"""
@@ -320,7 +330,7 @@ class PortfolioMetrics:
         
         return dates, codes, weights_arr, returns_arr
     
-    def calculate_portfolio_metrics(self, turn_loss: float = 0.003):
+    def calculate_portfolio_metrics(self, turn_loss):
         """计算投资组合的收益率、换手率及带成本的净值"""
         start_time = time.time()
         is_minute = self.is_minute
@@ -329,8 +339,6 @@ class PortfolioMetrics:
         returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
         weights_wide = weights_wide.fillna(0)
         returns_wide = returns_wide.fillna(0)
-        print(returns_wide)
-        print(weights_wide)
         portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
         
         # 初始化换手率相关列
@@ -450,7 +458,7 @@ class PortfolioMetrics:
     
         print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return portfolio_returns, turnover, daily_filename
+        return daily_results, minute_results, daily_filename
 
 class StrategyPlotter:
     """策略绘图类"""
@@ -553,53 +561,77 @@ class StrategyPlotter:
         # TODO: 实现图表保存功能
         pass
 
-def backtest(data_directory, frequency, stock_path, return_file, use_equal_weights, plot_results):
-    """主函数，支持交互式和命令行参数两种调用方式"""
-    try:
-        print("=== 投资组合指标计算器 ===")
-        
-        # 初始化检查器，传递 data_directory 参数
+def backtest(data_directory, frequency, stock_path, return_path, use_equal_weights, plot_results, turn_loss, input_type):
+    """
+    执行回测并计算投资组合指标
+    
+    参数:
+    data_directory: 数据目录
+    frequency: 频率，'daily'或'minute'
+    stock_path: 股票权重文件路径或DataFrame对象
+    return_path: 收益率文件路径或DataFrame对象，如果为None则从数据库获取
+    use_equal_weights: 是否使用等权重
+    plot_results: 是否绘制结果图表
+    turn_loss: 换手损失率
+    input_type: 输入类型，'csv'或'df'
+    
+    返回:
+    portfolio_returns: 投资组合收益率
+    turnover: 换手率
+    """
+    # 确保输出目录存在
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # 根据频率设置检查器
+    if frequency == 'minute':
         checker = DataChecker(data_directory)
-        weights = pd.read_csv(stock_path)
-        checker.check_trading_dates(weights)
-        if frequency == 'minute':
-            checker.check_time_frequency(weights)
-        
-        print("数据验证通过")
-        
-        # 初始化组合指标计算器
-        portfolio = PortfolioMetrics(
-            weight_file=stock_path,
-            return_file=return_file,
-            use_equal_weights=use_equal_weights,
-            data_directory=data_directory
-        )
-        
-        # 执行计算并保存结果
-        portfolio_returns, turnover,daily_filename = portfolio.calculate_portfolio_metrics()
-        print(f"\n计算完成！结果已保存")
-        # 如果需要绘制结果
-        if plot_results:
-            try:
-                results_df = pd.read_csv(daily_filename)
-                plotter = StrategyPlotter(output_dir='output')
-                plotter.plot_net_value(results_df, f"Portfolio_{frequency}")
-                print("已生成策略净值图表")
-            except Exception as e:
-                print(f"绘制图表时出错: {str(e)}")
-
-        return portfolio_returns, turnover
-        
-    except Exception as e:
-        print(f"\n执行过程中出现错误: {str(e)}")
-        raise
+    else:
+        checker = None
+    
+    # 处理输入数据
+    if input_type == 'csv':
+        if stock_path is None:
+            raise ValueError("未提供股票权重文件路径")
+        if not os.path.exists(stock_path):
+            raise FileNotFoundError(f"找不到股票权重文件: {stock_path}")
+    elif input_type == 'df':
+        if not isinstance(stock_path, pd.DataFrame):
+            raise ValueError("当input_type为'df'时，stock_path必须是DataFrame对象")
+    else:
+        raise ValueError("input_type必须是'csv'或'df'")
+    
+    # 创建投资组合指标计算器
+    metrics = PortfolioMetrics(
+        stock_path=stock_path,
+        return_path=return_path,
+        use_equal_weights=use_equal_weights,
+        data_directory=data_directory,
+        input_type=input_type,
+        turn_loss=turn_loss
+    )
+    
+    # 计算投资组合指标
+    portfolio_returns, turnover, daily_filename = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
+    
+    # 绘制结果
+    if plot_results:
+        plotter = StrategyPlotter()
+        daily_results = pd.read_csv(daily_filename)
+        plotter.plot_net_value(daily_results, "投资组合策略")
+    
+    return portfolio_returns, turnover
 
 if __name__ == "__main__":
-    portfolio_returns, turnover= backtest(
+    portfolio_returns, turnover = backtest(
         data_directory='D:\\Data',
+        turn_loss=0.003,
         frequency='minute',
-        stock_path=r'D:\\Derek\\Code\\Checker\\data\\output112.csv',
-        return_file=r'D:\\Derek\\Code\\Checker\\data\\output112.csv',
-        use_equal_weights=True,
-        plot_results=True
+        stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_100009.csv',
+        return_path=r'D:\\Derek\\Code\\Keven_wang\\output3411.csv',
+        use_equal_weights=False,
+        plot_results=True,
+        input_type='csv'  
     )
+    print(portfolio_returns)
+    print(turnover)
+    print('完成')

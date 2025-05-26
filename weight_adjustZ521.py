@@ -15,6 +15,8 @@ Data dictionary:
     minutes_taken：完成时间点
     remaining_diff：剩余未完成部分
     operation_type：操作类型
+    limit_up：是否涨停
+    limit_down：是否跌停
 
 '''
 
@@ -66,12 +68,13 @@ class WeightAdjuster:
             
         return minutes
     
-    def adjust_weights(self, daily_weights_df):
+    def adjust_weights(self, daily_weights_df, limit_status_df=None):
         """
         将日频目标权重调整为分钟频权重
         
         参数:
         daily_weights_df: 包含date, code, weight三列的DataFrame
+        limit_status_df: 可选，包含date, code, limit_up, limit_down的DataFrame，表示每日每只股票的涨跌停状态
         
         返回:
         分钟频权重DataFrame，包含datetime, code, weight三列
@@ -84,6 +87,20 @@ class WeightAdjuster:
         
         # 确保日期格式正确
         daily_weights_df['date'] = pd.to_datetime(daily_weights_df['date']).dt.date
+        
+        # 处理涨跌停状态数据
+        if limit_status_df is not None:
+            # 确保日期格式正确
+            limit_status_df['date'] = pd.to_datetime(limit_status_df['date']).dt.date
+            # 创建日期和股票代码的联合键
+            limit_status_df['date_code'] = limit_status_df['date'].astype(str) + '_' + limit_status_df['code']
+            # 创建涨跌停状态字典，方便查询
+            limit_up_dict = dict(zip(limit_status_df['date_code'], limit_status_df['limit_up']))
+            limit_down_dict = dict(zip(limit_status_df['date_code'], limit_status_df['limit_down']))
+        else:
+            # 如果没有提供涨跌停数据，创建空字典
+            limit_up_dict = {}
+            limit_down_dict = {}
         
         # 初始化结果DataFrame
         minute_weights = []
@@ -107,8 +124,12 @@ class WeightAdjuster:
             
             # 获取前一天的最终权重作为当天的初始权重
             if i == 0:
-                # 第一天的初始权重为0
-                initial_weights_dict = {code: 0 for code in all_codes}
+                # 第一天的初始权重等于目标权重（即已持仓）
+                initial_weights_dict = target_weights_dict.copy()
+                # 确保所有出现过的股票代码都有初始权重
+                for code in all_codes:
+                    if code not in initial_weights_dict:
+                        initial_weights_dict[code] = 0
             else:
                 # 获取前一天的最后一个分钟的权重
                 prev_date = unique_dates[i-1]
@@ -155,8 +176,20 @@ class WeightAdjuster:
                 if initial_weight == 0 and target_weight == 0:
                     continue
                 
-                # 严格按照最大变化限制调整
-                weight_change_per_minute = np.sign(weight_diff) * min(self.max_change_per_minute,abs(weight_diff) / 1)
+                # 检查股票是否涨停或跌停
+                date_code_key = f"{date}_{code}"
+                is_limit_up = limit_up_dict.get(date_code_key, False)
+                is_limit_down = limit_down_dict.get(date_code_key, False)
+                
+                # 涨停股票不能增加权重，跌停股票不能减少权重
+                if (is_limit_up and weight_diff > 0) or (is_limit_down and weight_diff < 0):
+                    # 如果涨停且需要增加权重，或者跌停且需要减少权重，则无法调整
+                    weight_change_per_minute = 0
+                    can_adjust = False
+                else:
+                    # 正常情况下按照最大变化限制调整
+                    weight_change_per_minute = np.sign(weight_diff) * min(self.max_change_per_minute, abs(weight_diff) / 1)
+                    can_adjust = True
                 
                 # 计算每分钟的权重
                 current_weight = initial_weight
@@ -164,14 +197,15 @@ class WeightAdjuster:
                 completion_minute = None
                 
                 for idx, minute in enumerate(trading_minutes):
-                    # 按照变化限制慢慢变化
-                    current_weight += weight_change_per_minute
-                    
-                    # 确保不会超过目标权重
-                    if weight_diff > 0:
-                        current_weight = min(current_weight, target_weight)
-                    else:
-                        current_weight = max(current_weight, target_weight)
+                    if can_adjust:
+                        # 按照变化限制慢慢变化
+                        current_weight += weight_change_per_minute
+                        
+                        # 确保不会超过目标权重
+                        if weight_diff > 0:
+                            current_weight = min(current_weight, target_weight)
+                        else:
+                            current_weight = max(current_weight, target_weight)
                     
                     minute_weights.append({
                         'datetime': minute,
@@ -195,7 +229,9 @@ class WeightAdjuster:
                     'weight_diff': weight_diff,
                     'final_weight': current_weight,
                     'completed': weight_completed,
-                    'is_sell': is_sell
+                    'is_sell': is_sell,
+                    'limit_up': is_limit_up,
+                    'limit_down': is_limit_down
                 }
                 
                 if weight_completed:
@@ -213,6 +249,19 @@ class WeightAdjuster:
                     daily_completion[code]['session'] = '未完成'
                     daily_completion[code]['minutes_taken'] = total_minutes
                     daily_completion[code]['remaining_diff'] = target_weight - current_weight
+                    
+                    # 计算完成比例
+                    if abs(weight_diff) > 0:
+                        completion_ratio = (abs(weight_diff) - abs(target_weight - current_weight)) / abs(weight_diff) * 100
+                        daily_completion[code]['completion_ratio'] = completion_ratio
+                    else:
+                        daily_completion[code]['completion_ratio'] = 0
+                    
+                    # 如果是因为涨跌停导致无法完成，记录原因
+                    if is_limit_up and weight_diff > 0:
+                        daily_completion[code]['fail_reason'] = '涨停无法买入'
+                    elif is_limit_down and weight_diff < 0:
+                        daily_completion[code]['fail_reason'] = '跌停无法卖出'
             
             # 将每日完成情况添加到总统计中
             completion_stats.extend(daily_completion.values())
@@ -224,19 +273,23 @@ class WeightAdjuster:
         if not minute_weights_df.empty:
             minute_weights_df['date'] = minute_weights_df['datetime'].dt.date
             minute_weights_df['time'] = minute_weights_df['datetime'].dt.time
+            
+            # 按照datetime时间顺序排序
+            minute_weights_df = minute_weights_df.sort_values(by='datetime')
         
         # 创建权重完成时间统计DataFrame
         completion_stats_df = pd.DataFrame(completion_stats)
         
         return minute_weights_df, completion_stats_df
 
-def adjust(input_file, max_change):
+def adjust(input_file, max_change, limit_status_file=None):
     """
     主函数
     
     参数:
     input_file: 输入文件路径
     max_change: 每分钟最大权重变化限制
+    limit_status_file: 可选，涨跌停状态文件路径
     """
     if not os.path.exists(input_file):
         print(f"错误: 文件 {input_file} 不存在!")
@@ -245,6 +298,12 @@ def adjust(input_file, max_change):
     # 读取数据
     daily_weights = pd.read_csv(input_file)
     print(f"读取到 {len(daily_weights)} 条日频权重记录")
+    
+    # 读取涨跌停状态数据（如果提供）
+    limit_status_df = None
+    if limit_status_file and os.path.exists(limit_status_file):
+        limit_status_df = pd.read_csv(limit_status_file)
+        print(f"读取到 {len(limit_status_df)} 条涨跌停状态记录")
     
     # 获取最大权重变化限制
     try:
@@ -257,7 +316,7 @@ def adjust(input_file, max_change):
     adjuster = WeightAdjuster(max_change_per_minute=max_change)
     
     # 调整权重
-    minute_weights, completion_stats = adjuster.adjust_weights(daily_weights)
+    minute_weights, completion_stats = adjuster.adjust_weights(daily_weights, limit_status_df)
     
     # 确保output目录存在
     output_dir = "output"
@@ -314,6 +373,13 @@ def adjust(input_file, max_change):
             else:
                 operation_type = "持平"
             
+            # 添加涨跌停状态
+            limit_status = ""
+            if stat.get('limit_up', False):
+                limit_status = "涨停"
+            elif stat.get('limit_down', False):
+                limit_status = "跌停"
+            
             if stat['completed']:
                 completion_time = str(stat['completion_time'])
                 minutes_taken = str(stat['minutes_taken'])
@@ -321,16 +387,23 @@ def adjust(input_file, max_change):
             else:
                 completion_time = "未完成"
                 minutes_taken = "-"
-                status = f"剩余差异: {stat['remaining_diff']:.4f}"
+                if 'fail_reason' in stat:
+                    status = stat['fail_reason']
+                else:
+                    # 使用完成比例替代剩余差异
+                    completion_ratio = stat.get('completion_ratio', 0)
+                    status = f"已完成: {completion_ratio:.2f}%"
             
-            row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} | {operation_type} |"
+            row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} | {operation_type} | {limit_status} |"
 
         # 输出统计信息
         completed = [s for s in stats if s['completed']]
         not_completed = [s for s in stats if not s['completed']]
         sell_operations = [s for s in stats if s.get('is_sell', False)]
+        limit_up_stocks = [s for s in stats if s.get('limit_up', False)]
+        limit_down_stocks = [s for s in stats if s.get('limit_down', False)]
         
-        print(f"{date} 总结: 总股票数 {len(stats)}, 已完成 {len(completed)}, 未完成 {len(not_completed)}, 卖出操作 {len(sell_operations)}")
+        print(f"{date} 总结: 总股票数 {len(stats)}, 已完成 {len(completed)}, 未完成 {len(not_completed)}, 卖出操作 {len(sell_operations)}, 涨停 {len(limit_up_stocks)}, 跌停 {len(limit_down_stocks)}")
         
         if completed:
             am_completed = [s for s in completed if s['session'] == '上午']
@@ -347,6 +420,7 @@ def adjust(input_file, max_change):
 if __name__ == "__main__":
     # 使用原始字符串r前缀或双反斜杠来避免转义问题
     minute_weights, completion_stats = adjust(
-        input_file=r"D:\Derek\Code\Checker\csv\mon3.csv",  # 使用r前缀
-        max_change=0.000015
+        input_file=r"D:\Derek\Code\Checker\csv\mon341.csv",  # 使用r前缀
+        max_change=0.000001,
+        limit_status_file=r"D:\Derek\Code\Checker\csv\limit_status.csv"  # 涨跌停状态文件
     )
