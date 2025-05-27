@@ -248,20 +248,22 @@ class WeightAdjuster:
                     daily_completion[code]['completion_time'] = None
                     daily_completion[code]['session'] = '未完成'
                     daily_completion[code]['minutes_taken'] = total_minutes
-                    daily_completion[code]['remaining_diff'] = target_weight - current_weight
+                    # 如果remaining_diff没有数据则填充为0
+                    remaining_diff = target_weight - current_weight if target_weight is not None and current_weight is not None else 0
+                    daily_completion[code]['remaining_diff'] = remaining_diff
                     
-                    # 计算完成比例
-                    if abs(weight_diff) > 0:
-                        completion_ratio = (abs(weight_diff) - abs(target_weight - current_weight)) / abs(weight_diff) * 100
-                        daily_completion[code]['completion_ratio'] = completion_ratio
-                    else:
-                        daily_completion[code]['completion_ratio'] = 0
-                    
-                    # 如果是因为涨跌停导致无法完成，记录原因
-                    if is_limit_up and weight_diff > 0:
-                        daily_completion[code]['fail_reason'] = '涨停无法买入'
-                    elif is_limit_down and weight_diff < 0:
-                        daily_completion[code]['fail_reason'] = '跌停无法卖出'
+                # 计算完成比例
+                if abs(weight_diff) > 0:
+                    completion_ratio = (abs(weight_diff) - abs(target_weight - current_weight)) / abs(weight_diff) * 100
+                    daily_completion[code]['completion_ratio'] = completion_ratio
+                else:
+                    daily_completion[code]['completion_ratio'] = 100
+                
+                # 如果是因为涨跌停导致无法完成，记录原因
+                if is_limit_up and weight_diff > 0:
+                    daily_completion[code]['fail_reason'] = '涨停无法买入'
+                elif is_limit_down and weight_diff < 0:
+                    daily_completion[code]['fail_reason'] = '跌停无法卖出'
             
             # 将每日完成情况添加到总统计中
             completion_stats.extend(daily_completion.values())
@@ -395,7 +397,7 @@ def adjust(input_file, max_change, limit_status_file=None):
                     status = f"已完成: {completion_ratio:.2f}%"
             
             row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} | {operation_type} | {limit_status} |"
-
+        print(row)
         # 输出统计信息
         completed = [s for s in stats if s['completed']]
         not_completed = [s for s in stats if not s['completed']]

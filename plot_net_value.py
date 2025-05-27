@@ -128,27 +128,13 @@ class StrategyPlotter:
         # 显示图表
         fig.show()
         
-    def plot_multiple_net_values(self, file_paths, output_filename="net_value_comparison"):
+    def plot_multiple_net_values(self, file_paths, strategy_name_map, color_map):
         """绘制多个文件的净值对比图"""
         fig = go.Figure()
         
         # 记录所有策略的开始和结束日期
         all_start_dates = []
         all_end_dates = []
-        
-        # 定义策略名称映射
-        strategy_name_map = {
-            '20250526_100254': '分钟0.000001净值',
-            '20250523_142247': '分钟0.0001净值',
-            '20250523_141923': '分钟0.00001净值'
-        }
-        
-        # 定义颜色映射，按照用户指定的顺序
-        color_map = {
-            '分钟0.00001净值': '#1f77b4',  # 蓝色
-            '分钟0.0001净值': '#d62728',   # 红色
-            '分钟0.000001净值': '#2ca02c'  # 绿色
-        }
         
         # 处理每个文件
         for file_path in file_paths:
@@ -239,7 +225,9 @@ class StrategyPlotter:
                 paper_bgcolor='white'  # 白色纸张背景
             )
             
-            # 保存图表
+            output_filename = "Net worth comparison"
+            
+            # 保持原有路径生成代码不变
             output_path = os.path.join(self.output_dir, f"{output_filename}.html")
             fig.write_html(output_path, config={'responsive': True})  # 添加响应式支持
             logger.info(f"对比图表已保存至: {output_path}")
@@ -249,21 +237,35 @@ class StrategyPlotter:
         else:
             logger.error("没有有效的数据可以绘制")
 
-# 主函数
 def main():
+
     # 文件路径
     file_paths = [
-        r'D:\Derek\Code\Checker\output\daily_summary_20250523_142247.csv',
-        r'D:\Derek\Code\Checker\output\daily_summary_20250523_141923.csv',
-        r'D:\Derek\Code\Checker\output\daily_summary_20250526_100254.csv'
+        r'D:\Derek\Code\Checker\output\daily_summary_20250526_155533.csv',
+        r'D:\Derek\Code\Checker\output\daily_summary_20250526_155755.csv',
+        r'D:\Derek\Code\Checker\output\daily_summary_20250526_160000.csv'
     ]
+
+    strategy_name_map = {
+        '20250526_155533': '分钟0.000001净值',
+        '20250526_155755': '分钟0.0001净值',
+        '20250526_160000': '分钟0.00001净值'
+    }
+    
+    # 定义颜色映射，按照用户指定的顺序
+    color_map = {
+        '分钟0.0001净值': '#d62728',   # 红色
+        '分钟0.00001净值': '#1f77b4',  # 蓝色
+        '分钟0.000001净值': '#2ca02c'  # 绿色
+    }
     
     # 创建绘图器实例
     plotter = StrategyPlotter(output_dir=r'D:\Derek\Code\Checker\output')
     
     # 绘制净值对比图
-    plotter.plot_multiple_net_values(file_paths)
+    plotter.plot_multiple_net_values(file_paths,strategy_name_map, color_map)
 
 
 if __name__ == "__main__":
     main()
+   

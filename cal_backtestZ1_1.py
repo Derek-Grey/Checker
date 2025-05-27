@@ -626,7 +626,7 @@ if __name__ == "__main__":
         data_directory='D:\\Data',
         turn_loss=0.003,
         frequency='minute',
-        stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_100009.csv',
+        stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_154852.csv',
         return_path=r'D:\\Derek\\Code\\Keven_wang\\output3411.csv',
         use_equal_weights=False,
         plot_results=True,
