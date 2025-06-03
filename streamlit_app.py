@@ -74,9 +74,9 @@ st.plotly_chart(fig)
 
 st.header("权重完成度原始表格展示")
 csv_paths = [
-    r"D:\Derek\Code\Checker\output\weight_completion_stats_20250526_160244.csv",
-    r"D:\Derek\Code\Checker\output\weight_completion_stats_20250526_160300.csv",
-    r"D:\Derek\Code\Checker\output\weight_completion_stats_20250526_160317.csv"
+    r"D:\\Derek\\Code\\Checker\\output\\weight_completion_stats_20250526_160244.csv",
+    r"D:\\Derek\\Code\\Checker\\output\\weight_completion_stats_20250526_160300.csv",
+    r"D:\\Derek\\Code\\Checker\\output\\weight_completion_stats_20250526_160317.csv"
 ]
 table_names = ["分钟权重0.0001", "分钟权重0.00001", "分钟权重0.000001"]
 table_colors = ["#ffeaea", "#eaf6ff", "#eaffea"]  

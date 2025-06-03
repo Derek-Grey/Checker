@@ -334,28 +334,29 @@ class PortfolioMetrics:
         """计算投资组合的收益率、换手率及带成本的净值"""
         start_time = time.time()
         is_minute = self.is_minute
-    
+
         weights_wide = pd.DataFrame(self.weights_arr, index=self.dates, columns=self.codes)
         returns_wide = pd.DataFrame(self.returns_arr, index=self.dates, columns=self.codes)
         weights_wide = weights_wide.fillna(0)
         returns_wide = returns_wide.fillna(0)
         portfolio_returns = (weights_wide * returns_wide).sum(axis=1)
-        
+
         # 初始化换手率相关列
         turnover = pd.Series(index=weights_wide.index)
         passive_turnover = pd.Series(index=weights_wide.index)
         active_turnover = pd.Series(index=weights_wide.index)
-        
+
         # 第一个时间点的换手率应该是从0到初始权重的变化
         turnover.iloc[0] = weights_wide.iloc[0][weights_wide.iloc[0] > 0].sum()
         active_turnover.iloc[0] = turnover.iloc[0]  # 初始建仓全部是主动换手
         passive_turnover.iloc[0] = 0  # 初始没有被动换手
 
+        weight_differences_list = []
         for i in range(1, len(weights_wide)):
             curr_weights = weights_wide.iloc[i]
-            prev_weights = weights_wide.iloc[i-1]
-            returns_t = returns_wide.iloc[i-1]
-            
+            prev_weights = weights_wide.iloc[i - 1]
+            returns_t = returns_wide.iloc[i - 1]
+
             # 计算理论权重（考虑前一时间点的权重和收益率）
             theoretical_weights = prev_weights * (1 + returns_t)
             # 处理可能的0或负值
@@ -367,24 +368,32 @@ class PortfolioMetrics:
                 theoretical_weights = prev_weights.copy()
                 if prev_weights.sum() > 0:
                     theoretical_weights = theoretical_weights / prev_weights.sum()
-            
+
             # 被动换手率：前一天权重与理论权重的差异
             passive_turnover.iloc[i] = np.abs(prev_weights - theoretical_weights).sum() / 2
-            
+
             # 主动换手率：当前权重与理论权重的差异
             active_turnover.iloc[i] = np.abs(curr_weights - theoretical_weights).sum() / 2
-            
+
             # 总换手率（使用主动换手率）
             turnover.iloc[i] = active_turnover.iloc[i]
-    
+
+            # 计算权重差异
+            weight_differences = np.abs(curr_weights - theoretical_weights)
+            for code in self.codes:
+                weight_differences_list.append([weights_wide.index[i], code, weight_differences[code]])
+
         df = pd.DataFrame({
             'portfolio_return': portfolio_returns,
             'turnover': turnover,
             'passive_turnover': passive_turnover,
             'active_turnover': active_turnover
         })
-        print(df)
-        
+    
+        weight_differences_df = pd.DataFrame(weight_differences_list, columns=['time', 'code', 'weight_differences'])
+        # 过滤掉 weight_differences 为 0 的行
+        weight_differences_df = weight_differences_df[weight_differences_df['weight_differences'] != 0]
+
         # 设置交易成本
         df['loss'] = 0.0013
         df.loc[df.index > '2023-08-31', 'loss'] = 0.0008
@@ -395,7 +404,7 @@ class PortfolioMetrics:
         df['net_value'] = 1.0 - df['turnover'].iloc[0] * df['loss'].iloc[0] 
         
         # 从第二个时间点开始累积计算净值
-        df['net_value'].iloc[1:] = (df['chg_'].iloc[1:] + 1).cumprod() * df['net_value'].iloc[0]
+        df.loc[df.index[1:], 'net_value'] = (df['chg_'].iloc[1:] + 1).cumprod() * df['net_value'].iloc[0]
         
         df.index = pd.to_datetime(df.index)
         
@@ -415,12 +424,13 @@ class PortfolioMetrics:
             'net_value': df['net_value'],
             'pct_chg': df['pct_chg']
         }, index=pd.to_datetime(self.dates))
-        print(results)
+        
         print(f"投资组合指标计算总耗时: {time.time() - start_time:.2f}秒\n")
         output_prefix = 'minute' if is_minute else 'daily'
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f'output/{output_prefix}_portfolio_metrics_{timestamp}.csv'
-        
+        differences_filename = f'output/{output_prefix}_weight_differences_{timestamp}.csv'
+        weight_differences_df.to_csv(differences_filename, index=False)
         if is_minute:
             daily_results = results.copy()
             results['date'] = results.index.date
@@ -444,7 +454,6 @@ class PortfolioMetrics:
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
             daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
             daily_results.to_csv(daily_filename, index=False)
-            print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
         else:
             results['date'] = pd.to_datetime(results.index).date
             results = results.reset_index(drop=True)
@@ -454,11 +463,10 @@ class PortfolioMetrics:
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
             daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
             daily_results.to_csv(daily_filename, index=False)
-            print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
     
         print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return daily_results, minute_results, daily_filename
+        return daily_results, minute_results, daily_filename ,df ,weight_differences_df
 
 class StrategyPlotter:
     """策略绘图类"""
@@ -593,7 +601,7 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
         if stock_path is None:
             raise ValueError("未提供股票权重文件路径")
         if not os.path.exists(stock_path):
-            raise FileNotFoundError(f"找不到股票权重文件: {stock_path}")
+            raise FileNotFoundError(f"找不到股票权重文件: {stock_path}") 
     elif input_type == 'df':
         if not isinstance(stock_path, pd.DataFrame):
             raise ValueError("当input_type为'df'时，stock_path必须是DataFrame对象")
@@ -611,27 +619,25 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
     )
     
     # 计算投资组合指标
-    portfolio_returns, turnover, daily_filename = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
-    
+    daily_results, minute_results, daily_filename ,df ,weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
+   
     # 绘制结果
     if plot_results:
         plotter = StrategyPlotter()
         daily_results = pd.read_csv(daily_filename)
         plotter.plot_net_value(daily_results, "投资组合策略")
-    
-    return portfolio_returns, turnover
+
+    return daily_results, minute_results, daily_filename,df,weight_differences_df   
 
 if __name__ == "__main__":
-    portfolio_returns, turnover = backtest(
+    daily_results, minute_results, daily_filename,df,weight_differences_df = backtest(
         data_directory='D:\\Data',
         turn_loss=0.003,
         frequency='minute',
         stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_154852.csv',
-        return_path=r'D:\\Derek\\Code\\Keven_wang\\output3411.csv',
+        return_path=r'D:\\Derek\\Code\\Keven_wang\\341.csv',
         use_equal_weights=False,
         plot_results=True,
-        input_type='csv'  
+        input_type='csv'
     )
-    print(portfolio_returns)
-    print(turnover)
     print('完成')
