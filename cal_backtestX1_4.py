@@ -210,7 +210,7 @@ class DataChecker:
 
 class PortfolioMetrics:
     """投资组合指标计算器类"""
-    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss):
+    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss, save_csv=True):
         self.stock_path = stock_path
         self.return_path = return_path
         self.use_equal_weights = use_equal_weights
@@ -220,6 +220,7 @@ class PortfolioMetrics:
         self.returns = None
         self.index_cols = None
         self.is_minute = None
+        self.save_csv = save_csv  # 新增参数控制CSV输出
         self.prepare_data()
         self.turn_loss = turn_loss
 
@@ -427,8 +428,13 @@ class PortfolioMetrics:
             results['time'] = results.index.time
             results = results.reset_index(drop=True)
             minute_results = results[['date', 'time', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
-            minute_results.to_csv(filename)
-            print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
+            
+            # 只有当save_csv为True时才保存CSV文件
+            if self.save_csv:
+                minute_results.to_csv(filename)
+                print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
+            else:
+                print(f"跳过保存原始分钟频数据（save_csv=False），共 {len(minute_results)} 行")
             
             # 计算每日收益率总和
             daily_sum_returns = results.groupby('date')['portfolio_return'].sum()
@@ -443,20 +449,35 @@ class PortfolioMetrics:
             # 计算指数净值，保留第一天的实际收益
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
             daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
-            daily_results.to_csv(daily_filename, index=False)
-            print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
+            
+            if self.save_csv:
+                daily_results.to_csv(daily_filename, index=False)
+                print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
+            else:
+                print(f"跳过保存日频汇总数据（save_csv=False），共 {len(daily_results)} 行")
         else:
             results['date'] = pd.to_datetime(results.index).date
             results = results.reset_index(drop=True)
             results = results[['date', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
             
             # 计算指数净值，保留第一天的实际收益
-            daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
-            daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
-            daily_results.to_csv(daily_filename, index=False)
-            print(f"已保存日频汇总数据，共 {len(daily_results)} 行")
+            results['index_net_value'] = (results['pct_chg'] + 1).cumprod()
+            results.loc[results.index[0], 'index_net_value'] = 1
+            
+            if self.save_csv:
+                results.to_csv(filename, index=False)
+                print(f"已保存日频数据，共 {len(results)} 行")
+            else:
+                print(f"跳过保存日频数据（save_csv=False），共 {len(results)} 行")
+            
+            daily_results = results
+            minute_results = None
+            daily_filename = filename if self.save_csv else None
     
-        print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
+        if self.save_csv:
+            print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
+        else:
+            print(f"跳过保存{output_prefix}频投资组合指标数据（save_csv=False），共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
         return daily_results, minute_results, daily_filename
 

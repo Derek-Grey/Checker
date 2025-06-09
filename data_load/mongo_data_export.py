@@ -4,6 +4,7 @@ import pymongo
 import csv
 from urllib.parse import quote_plus
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,14 @@ def get_database(db_name='basic_wind', auth_type='r'):
     return client[db_name]
 
 def export_data(start_date, end_date):
+    # 创建输出目录
+    script_dir = os.path.dirname(__file__)
+    output_dir = os.path.join(script_dir, 'mongo_data_export')
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 构建完整文件路径
+    output_path = os.path.join(output_dir, '250101-250501.csv')
+    
     # 建立数据库连接（使用读写权限）
     db = get_database('basic_wind', 'rw')
     collection = db['ww_indexconstituent8841431']
@@ -56,7 +65,7 @@ def export_data(start_date, end_date):
 
     # 导出到CSV
     count = 0
-    with open('250101-250501.csv', 'w', newline='', encoding='utf-8') as f:
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         # 修改列名：date, code, weight(原i_weight)
         writer.writerow(['date', 'code', 'weight'])
@@ -70,7 +79,7 @@ def export_data(start_date, end_date):
             ])
             count += 1
             
-    print(f'成功导出{count}条数据到250101-250501.csv')
+    print(f'成功导出{count}条数据到 {output_path}')
 
 if __name__ == '__main__':
     export_data('2025-01-01', '2025-05-01')

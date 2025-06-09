@@ -5,6 +5,7 @@ from urllib.parse import quote_plus
 import logging
 import time
 from multiprocessing import Pool, cpu_count
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -61,17 +62,23 @@ def export_data_for_date(date):
 
 def export_data(start_date, end_date):
     start_time = time.time()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, '240101-240630.csv')
+    
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
     date_range = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    
     with Pool(cpu_count()) as pool:
         results = pool.map(export_data_for_date, date_range)
-    with open('240101-240630.csv', 'w', newline='', encoding='utf-8') as f:
+    
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['date', 'code', 'return'])
         for rows in results:
             writer.writerows(rows)
-    print(f'成功导出数据到240101-240630.csv')
+    
+    print(f'成功导出数据到 {output_path}')
     end_time = time.time()
     total_time = end_time - start_time
     print(f'数据导出耗时: {total_time} 秒')

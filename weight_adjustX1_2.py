@@ -397,7 +397,7 @@ def adjust(input_file, max_change, limit_status_file=None):
                     status = f"已完成: {completion_ratio:.2f}%"
             
             row = f"| {code} | {initial_weight} | {target_weight} | {completion_time} | {minutes_taken} | {status} | {operation_type} | {limit_status} |"
-        print(row)
+
         # 输出统计信息
         completed = [s for s in stats if s['completed']]
         not_completed = [s for s in stats if not s['completed']]
