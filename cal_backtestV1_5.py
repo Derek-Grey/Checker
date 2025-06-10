@@ -226,7 +226,6 @@ class PortfolioMetrics:
     def prepare_data(self):
         """为投资组合指标计算准备数据。"""
         start_time = time.time()
-        
         # 根据输入类型读取权重数据
         if self.input_type == 'csv':
             weights_df = pd.read_csv(self.stock_path)
@@ -527,7 +526,6 @@ class StrategyPlotter:
         
         g3 = go.Scatter(x=df.index.unique().tolist(), y=df['index_net_value'], name='指数净值')
 
-        # 修正后的图表配置
         fig = go.Figure(
             data=[g1, g2, g3],
             layout={

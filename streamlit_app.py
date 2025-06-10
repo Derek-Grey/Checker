@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import os
+import os 
 st.set_page_config(layout="wide")
 
 file_paths = [
@@ -83,6 +83,11 @@ table_colors = ["#ffeaea", "#eaf6ff", "#eaffea"]
 for path, name, color in zip(csv_paths, table_names, table_colors):
     st.subheader(f"表格：{name}")
     df = pd.read_csv(path)
+    
+    # 过滤掉 completion_time 为 09:30:00 的行
+    if 'completion_time' in df.columns:
+        df = df[df['completion_time'] != '09:30:00']
+    
     show_cols = [col for col in ['date','code','completed','completion_time','completion_ratio'] if col in df.columns]
     styled_df = df[show_cols].style.set_properties(**{'background-color': color})
     st.dataframe(styled_df, use_container_width=True)

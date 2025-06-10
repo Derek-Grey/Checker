@@ -220,14 +220,13 @@ class PortfolioMetrics:
         self.returns = None
         self.index_cols = None
         self.is_minute = None
-        self.save_csv = save_csv  # 新增参数控制CSV输出
+        self.save_csv = save_csv 
         self.prepare_data()
         self.turn_loss = turn_loss
 
     def prepare_data(self):
         """为投资组合指标计算准备数据。"""
         start_time = time.time()
-        
         # 根据输入类型读取权重数据
         if self.input_type == 'csv':
             weights_df = pd.read_csv(self.stock_path)
@@ -428,8 +427,7 @@ class PortfolioMetrics:
             results['time'] = results.index.time
             results = results.reset_index(drop=True)
             minute_results = results[['date', 'time', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
-            
-            # 只有当save_csv为True时才保存CSV文件
+
             if self.save_csv:
                 minute_results.to_csv(filename)
                 print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
@@ -548,7 +546,6 @@ class StrategyPlotter:
         
         g3 = go.Scatter(x=df.index.unique().tolist(), y=df['index_net_value'], name='指数净值')
 
-        # 修正后的图表配置
         fig = go.Figure(
             data=[g1, g2, g3],
             layout={

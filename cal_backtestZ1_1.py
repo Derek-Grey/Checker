@@ -400,7 +400,7 @@ class PortfolioMetrics:
         df['loss'] += turn_loss
         df['chg_'] = df['portfolio_return'] - df['turnover'] * df['loss']
         
-        # 修改净值计算，初始净值应该扣除初始建仓成本
+        # 初始净值应该扣除初始建仓成本
         df['net_value'] = 1.0 - df['turnover'].iloc[0] * df['loss'].iloc[0] 
         
         # 从第二个时间点开始累积计算净值
@@ -431,7 +431,6 @@ class PortfolioMetrics:
         filename = f'output/{output_prefix}_portfolio_metrics_{timestamp}.csv'
         differences_filename = f'output/{output_prefix}_weight_differences_{timestamp}.csv'
         
-        # 只有当save_csv为True时才保存CSV文件
         if self.save_csv:
             weight_differences_df.to_csv(differences_filename, index=False)
         else:
@@ -467,7 +466,7 @@ class PortfolioMetrics:
             if self.save_csv:
                 daily_results.to_csv(daily_filename, index=False)
             else:
-                daily_filename = None  # 不保存时返回None
+                daily_filename = None  
                 print(f"跳过保存日频汇总数据（save_csv=False）")
         else:
             results['date'] = pd.to_datetime(results.index).date
@@ -561,7 +560,6 @@ class StrategyPlotter:
         
         g3 = go.Scatter(x=df.index.unique().tolist(), y=df['index_net_value'], name='指数净值')
 
-        # 修正后的图表配置
         fig = go.Figure(
             data=[g1, g2, g3],
             layout={
@@ -647,7 +645,6 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
     )
     
     # 计算投资组合指标
-
     daily_results, minute_results, df, weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
    
     if plot_results:
