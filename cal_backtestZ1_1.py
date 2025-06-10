@@ -492,7 +492,7 @@ class PortfolioMetrics:
         else:
             print(f"跳过保存{output_prefix}频投资组合指标数据（save_csv=False），共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return daily_results, minute_results, daily_filename, df, weight_differences_df
+        return daily_results, minute_results, df, weight_differences_df
 
 class StrategyPlotter:
     """策略绘图类"""
@@ -643,31 +643,28 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
         data_directory=data_directory,
         input_type=input_type,
         turn_loss=turn_loss,
-        save_csv=save_csv  # 新增参数
+        save_csv=save_csv  
     )
     
     # 计算投资组合指标
-    daily_results, minute_results, daily_filename ,df ,weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
-   
-    # 绘制结果
-    if plot_results and save_csv:  # 只有保存CSV时才能绘图
-        plotter = StrategyPlotter()
-        daily_results = pd.read_csv(daily_filename)
-        plotter.plot_net_value(daily_results, "投资组合策略")
-    elif plot_results and not save_csv:
-        print("警告：由于save_csv=False，跳过绘图功能")
 
-    return daily_results, minute_results, daily_filename,df,weight_differences_df   
+    daily_results, minute_results, df, weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
+   
+    if plot_results:
+        plotter = StrategyPlotter()
+        plotter.plot_net_value(daily_results, "投资组合策略")
+    
+    return daily_results, minute_results, df, weight_differences_df   
 
 if __name__ == "__main__":
-    daily_results, minute_results, daily_filename,df,weight_differences_df = backtest(
+    daily_results, minute_results, df,weight_differences_df = backtest(
         data_directory='D:\\Data',
         turn_loss=0.003,
         frequency='minute',
         stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_154852.csv',
         return_path=r'D:\\Derek\\Code\\Keven_wang\\341.csv',
         use_equal_weights=False,
-        plot_results=True,
+        plot_results=False,
         input_type='csv',
         save_csv=False
     )

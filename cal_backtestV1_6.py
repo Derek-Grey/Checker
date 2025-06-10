@@ -20,7 +20,6 @@ OUTPUT_DIR = Path(__file__).parent / 'output'
 
 # 导入自定义模块
 from pre_import.DictionaryDTType import D1_11_dtype, D1_11_numpy_dtype
-from db_client import get_client_U
 import pymongo
 from urllib.parse import quote_plus
 
@@ -210,12 +209,13 @@ class DataChecker:
 
 class PortfolioMetrics:
     """投资组合指标计算器类"""
-    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss):
+    def __init__(self, stock_path, return_path, use_equal_weights, data_directory, input_type, turn_loss, save_csv=True):
         self.stock_path = stock_path
         self.return_path = return_path
         self.use_equal_weights = use_equal_weights
         self.data_directory = data_directory
         self.input_type = input_type
+        self.save_csv = save_csv  
         self.weights = None
         self.returns = None
         self.index_cols = None
@@ -430,15 +430,25 @@ class PortfolioMetrics:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f'output/{output_prefix}_portfolio_metrics_{timestamp}.csv'
         differences_filename = f'output/{output_prefix}_weight_differences_{timestamp}.csv'
-        weight_differences_df.to_csv(differences_filename, index=False)
+        
+        # 只有当save_csv为True时才保存CSV文件
+        if self.save_csv:
+            weight_differences_df.to_csv(differences_filename, index=False)
+        else:
+            print(f"跳过保存权重差异文件（save_csv=False）")
+            
         if is_minute:
             daily_results = results.copy()
             results['date'] = results.index.date
             results['time'] = results.index.time
             results = results.reset_index(drop=True)
             minute_results = results[['date', 'time', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
-            minute_results.to_csv(filename)
-            print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
+            
+            if self.save_csv:
+                minute_results.to_csv(filename)
+                print(f"已保存原始分钟频数据，共 {len(minute_results)} 行")
+            else:
+                print(f"跳过保存原始分钟频数据（save_csv=False），共 {len(minute_results)} 行")
             
             # 计算每日收益率总和
             daily_sum_returns = results.groupby('date')['portfolio_return'].sum()
@@ -453,20 +463,36 @@ class PortfolioMetrics:
             # 计算指数净值，保留第一天的实际收益
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
             daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
-            daily_results.to_csv(daily_filename, index=False)
+            
+            if self.save_csv:
+                daily_results.to_csv(daily_filename, index=False)
+            else:
+                daily_filename = None  # 不保存时返回None
+                print(f"跳过保存日频汇总数据（save_csv=False）")
         else:
             results['date'] = pd.to_datetime(results.index).date
             results = results.reset_index(drop=True)
             results = results[['date', 'portfolio_return', 'turnover', 'net_value', 'pct_chg']]
             
             # 计算指数净值，保留第一天的实际收益
+            daily_results = results.copy()
             daily_results['index_net_value'] = (daily_results['pct_chg'] + 1).cumprod()
             daily_results.loc[daily_results.index[0], 'index_net_value'] = 1
-            daily_results.to_csv(daily_filename, index=False)
+            
+            if self.save_csv:
+                daily_results.to_csv(filename, index=False)
+                daily_filename = filename
+            else:
+                daily_filename = None
+                print(f"跳过保存日频数据（save_csv=False）")
+            minute_results = None
     
-        print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
+        if self.save_csv:
+            print(f"已保存{output_prefix}频投资组合指标数据，共 {len(results)} 行")
+        else:
+            print(f"跳过保存{output_prefix}频投资组合指标数据（save_csv=False），共 {len(results)} 行")
         print(f"计算指标总耗时: {time.time() - start_time:.2f}秒\n")
-        return daily_results, minute_results, daily_filename ,df ,weight_differences_df
+        return daily_results, minute_results, df, weight_differences_df
 
 class StrategyPlotter:
     """策略绘图类"""
@@ -569,7 +595,7 @@ class StrategyPlotter:
         # TODO: 实现图表保存功能
         pass
 
-def backtest(data_directory, frequency, stock_path, return_path, use_equal_weights, plot_results, turn_loss, input_type):
+def backtest(data_directory, frequency, stock_path, return_path, use_equal_weights, plot_results, turn_loss, input_type, save_csv=True):
     """
     执行回测并计算投资组合指标
     
@@ -582,6 +608,7 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
     plot_results: 是否绘制结果图表
     turn_loss: 换手损失率
     input_type: 输入类型，'csv'或'df'
+    save_csv: 是否保存CSV文件，默认为True
     
     返回:
     portfolio_returns: 投资组合收益率
@@ -615,29 +642,31 @@ def backtest(data_directory, frequency, stock_path, return_path, use_equal_weigh
         use_equal_weights=use_equal_weights,
         data_directory=data_directory,
         input_type=input_type,
-        turn_loss=turn_loss
+        turn_loss=turn_loss,
+        save_csv=save_csv  
     )
     
     # 计算投资组合指标
-    daily_results, minute_results, daily_filename ,df ,weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
+
+    daily_results, minute_results, df, weight_differences_df = metrics.calculate_portfolio_metrics(turn_loss=turn_loss)
    
-    # 绘制结果
     if plot_results:
         plotter = StrategyPlotter()
-        daily_results = pd.read_csv(daily_filename)
         plotter.plot_net_value(daily_results, "投资组合策略")
-
-    return daily_results, minute_results, daily_filename,df,weight_differences_df   
+    
+    return daily_results, minute_results, df, weight_differences_df   
 
 if __name__ == "__main__":
-    daily_results, minute_results, daily_filename,df,weight_differences_df = backtest(
+    daily_results, minute_results, df,weight_differences_df = backtest(
         data_directory='D:\\Data',
         turn_loss=0.003,
         frequency='minute',
         stock_path=r'D:\\Derek\\Code\\Checker\\output\\minute_weights_20250526_154852.csv',
         return_path=r'D:\\Derek\\Code\\Keven_wang\\341.csv',
         use_equal_weights=False,
-        plot_results=True,
-        input_type='csv'
+        plot_results=False,
+        input_type='csv',
+        save_csv=False
     )
-    print('完成')
+    print(daily_results)
+    print(minute_results)
